@@ -158,6 +158,11 @@ sealed class InstallResult {
     ) : InstallResult()
 }
 
+// This object deliberately coordinates the platform-specific update flows in one
+// place. Splitting it safely requires moving the shared validation and lifecycle
+// boundaries as a dedicated refactor, rather than coupling that churn to a
+// targeted update-outcome fix.
+@Suppress("LargeClass")
 object UpdateInstaller {
     private val logger = BossLogger.forComponent("UpdateInstaller")
 
