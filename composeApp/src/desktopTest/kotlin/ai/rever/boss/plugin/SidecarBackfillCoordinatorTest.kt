@@ -1,7 +1,9 @@
 package ai.rever.boss.plugin
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import java.io.File
 import kotlin.test.AfterTest
@@ -153,6 +155,86 @@ class SidecarBackfillCoordinatorTest {
             coordinator.setAuthenticated(true)
             advanceUntilIdle()
             assertEquals(listOf(jar.absolutePath), attempts)
+        }
+
+    @Test
+    fun `authentication lost and restored during persistence permits another attempt`() =
+        runTest {
+            val release = CompletableDeferred<Unit>()
+            var attempts = 0
+            val coordinator =
+                SidecarBackfillCoordinator(this, { false }, { false }) {
+                    attempts++
+                    if (attempts == 1) release.await()
+                }
+            coordinator.setAuthenticated(true)
+            coordinator.enqueue("plugin.refresh", temporaryJar("refresh"))
+            runCurrent()
+            assertEquals(1, attempts)
+            coordinator.setAuthenticated(false)
+            coordinator.setAuthenticated(true)
+            release.complete(Unit)
+            advanceUntilIdle()
+            assertEquals(2, attempts)
+        }
+
+    @Test
+    fun `logout during persistence retains work for a later login`() =
+        runTest {
+            val release = CompletableDeferred<Unit>()
+            var attempts = 0
+            val coordinator =
+                SidecarBackfillCoordinator(this, { false }, { false }) {
+                    attempts++
+                    if (attempts == 1) release.await()
+                }
+            coordinator.setAuthenticated(true)
+            coordinator.enqueue("plugin.logout-running", temporaryJar("logout-running"))
+            runCurrent()
+            coordinator.setAuthenticated(false)
+            release.complete(Unit)
+            advanceUntilIdle()
+            assertEquals(1, attempts)
+            coordinator.setAuthenticated(true)
+            advanceUntilIdle()
+            assertEquals(2, attempts)
+        }
+
+    @Test
+    fun `a second wakeup cannot persist concurrently with a suspended attempt`() =
+        runTest {
+            val release = CompletableDeferred<Unit>()
+            var attempts = 0
+            val coordinator =
+                SidecarBackfillCoordinator(this, { false }, { false }) {
+                    attempts++
+                    release.await()
+                }
+            coordinator.setAuthenticated(true)
+            coordinator.enqueue("plugin.first", temporaryJar("first"))
+            runCurrent()
+            coordinator.enqueue("plugin.second", temporaryJar("second"))
+            runCurrent()
+            assertEquals(1, attempts)
+            release.complete(Unit)
+            advanceUntilIdle()
+            assertEquals(2, attempts)
+        }
+
+    @Test
+    fun `a sidecar written while queued prevents persistence`() =
+        runTest {
+            var signed = false
+            var attempts = 0
+            val coordinator = SidecarBackfillCoordinator(this, { signed }, { false }) { attempts++ }
+            val jar = temporaryJar("already-signed")
+            coordinator.enqueue("plugin.signed", jar)
+            signed = true
+            coordinator.setAuthenticated(true)
+            advanceUntilIdle()
+            coordinator.enqueue("plugin.signed", jar)
+            advanceUntilIdle()
+            assertEquals(0, attempts)
         }
 
     private fun coordinator(

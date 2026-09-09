@@ -97,10 +97,10 @@ object PluginStoreSetup {
 
     private val sidecarBackfill =
         SidecarBackfillCoordinator(
-            scope = scope,
+            scope = CoroutineScope(scope.coroutineContext + Dispatchers.IO),
             sidecarExists = { jarFile -> PluginSignatureSidecar.read(jarFile.absolutePath) != null },
             updateInFlight = { pluginId -> inFlightUpdateChecks[pluginId]?.get() == true },
-            persist = { jar -> withContext(Dispatchers.IO) { persistStoreSignatureSidecar(jar) } },
+            persist = ::persistStoreSignatureSidecar,
         )
 
     /**
@@ -1849,7 +1849,14 @@ object PluginStoreSetup {
             .firstOrNull { !it.endsWith("-thin.jar") }
 }
 
-/** Coordinates authenticated, race-safe signature backfill for installed system-plugin JARs. */
+/**
+ * Coordinates authenticated signature backfill for installed system-plugin JARs.
+ * Authentication avoids the store permission gate; update completion wakes deferred JARs.
+ * Each completed attempt is counted even when unsigned: getDownloadUrl records a download,
+ * so ordinary failures must not create a retry loop. A signature-only store route would
+ * remove that cost (see #108). Cancellation and lost authentication may retry.
+ * The supplied scope must dispatch file probes and persistence onto an I/O dispatcher.
+ */
 internal class SidecarBackfillCoordinator(
     private val scope: CoroutineScope,
     private val sidecarExists: (File) -> Boolean,
@@ -1876,11 +1883,13 @@ internal class SidecarBackfillCoordinator(
     private val pending = java.util.concurrent.ConcurrentHashMap<String, PendingJar>()
     private val attempted = java.util.concurrent.ConcurrentHashMap.newKeySet<AttemptKey>()
     private val drainMutex = Mutex()
+    private val authenticationLosses = java.util.concurrent.atomic.AtomicLong()
 
     @Volatile
     private var authenticated = false
 
     fun setAuthenticated(available: Boolean) {
+        if (!available) authenticationLosses.incrementAndGet()
         authenticated = available
         if (available) requestDrain()
     }
@@ -1924,15 +1933,20 @@ internal class SidecarBackfillCoordinator(
             }
             if (!pending.remove(entry.pluginId, entry)) return@forEach
 
+            val authenticationGeneration = authenticationLosses.get()
             try {
                 persist(entry.jarFile)
+                val lostAuthentication = !authenticated || authenticationGeneration != authenticationLosses.get()
+                if (lostAuthentication && !sidecarExists(entry.jarFile)) {
+                    attempted.remove(attemptKey)
+                    pending.putIfAbsent(entry.pluginId, entry)
+                }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 attempted.remove(attemptKey)
                 pending.putIfAbsent(entry.pluginId, entry)
                 throw cancelled
             } catch (_: Exception) {
-                attempted.remove(attemptKey)
-                pending.putIfAbsent(entry.pluginId, entry)
+                // Unexpected failures also consume the attempt, preventing wakeup-driven retries.
             }
         }
     }
