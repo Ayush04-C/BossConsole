@@ -39,6 +39,15 @@ class McpActivityDialogTest {
         assertEquals(160, displayMcpActivityIdentifier("x".repeat(200)).length)
     }
 
+    @Test
+    fun `identifier display removes invisible direction controls while preserving visible unicode`() {
+        val controls =
+            "\u061c\u200b\u200c\u200d\u200e\u200f\u202a\u202b\u202c\u202d\u202e" +
+                "\u2066\u2067\u2068\u2069\ufeff"
+        assertEquals("safe_tool", displayMcpActivityIdentifier("safe${controls}_tool"))
+        assertEquals("工具_é", displayMcpActivityIdentifier("工具_é"))
+    }
+
     private fun event(
         sequence: Long,
         tool: String,

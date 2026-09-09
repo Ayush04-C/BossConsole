@@ -85,7 +85,7 @@ internal fun formatMcpActivityCompletion(
 ): String = ACTIVITY_TIME_FORMATTER.format(Instant.ofEpochMilli(epochMs).atZone(zoneId))
 
 internal fun displayMcpActivityIdentifier(identifier: String): String {
-    val clean = identifier.filterNot(Char::isISOControl)
+    val clean = identifier.filterNot { it.isISOControl() || it.category == CharCategory.FORMAT }
     if (clean.isBlank()) return "-"
     return if (clean.length > MAX_IDENTIFIER_LENGTH) clean.take(MAX_IDENTIFIER_LENGTH - 1) + "…" else clean
 }
