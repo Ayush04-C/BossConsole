@@ -106,6 +106,55 @@ class SidecarBackfillCoordinatorTest {
             assertEquals(listOf(jar.absolutePath), attempts)
         }
 
+    @Test
+    fun `enqueue before authentication waits for the token`() =
+        runTest {
+            val attempts = mutableListOf<String>()
+            val coordinator = coordinator(this, attempts = attempts)
+            val jar = temporaryJar("token-later")
+            coordinator.enqueue("plugin.token-later", jar)
+            advanceUntilIdle()
+            assertEquals(emptyList(), attempts)
+            coordinator.setAuthenticated(true)
+            advanceUntilIdle()
+            assertEquals(listOf(jar.absolutePath), attempts)
+        }
+
+    @Test
+    fun `requeued replacement is eligible after the old bytes were attempted`() =
+        runTest {
+            val attempts = mutableListOf<String>()
+            val coordinator = coordinator(this, attempts = attempts)
+            val jar = temporaryJar("new-build")
+            coordinator.setAuthenticated(true)
+            coordinator.enqueue("plugin.new-build", jar)
+            advanceUntilIdle()
+            jar.writeText("a replacement with a different length")
+            coordinator.enqueue("plugin.new-build", jar)
+            advanceUntilIdle()
+            assertEquals(listOf(jar.absolutePath, jar.absolutePath), attempts)
+        }
+
+    @Test
+    fun `logout pauses pending work until authentication returns`() =
+        runTest {
+            val attempts = mutableListOf<String>()
+            val updating = mutableSetOf("plugin.logout")
+            val coordinator = coordinator(this, attempts = attempts, updating = updating)
+            val jar = temporaryJar("logout")
+            coordinator.setAuthenticated(true)
+            coordinator.enqueue("plugin.logout", jar)
+            advanceUntilIdle()
+            coordinator.setAuthenticated(false)
+            updating.clear()
+            coordinator.onUpdateCheckCompleted("plugin.logout")
+            advanceUntilIdle()
+            assertEquals(emptyList(), attempts)
+            coordinator.setAuthenticated(true)
+            advanceUntilIdle()
+            assertEquals(listOf(jar.absolutePath), attempts)
+        }
+
     private fun coordinator(
         scope: CoroutineScope,
         attempts: MutableList<String>,

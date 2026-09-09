@@ -100,7 +100,7 @@ object PluginStoreSetup {
             scope = scope,
             sidecarExists = { jarFile -> PluginSignatureSidecar.read(jarFile.absolutePath) != null },
             updateInFlight = { pluginId -> inFlightUpdateChecks[pluginId]?.get() == true },
-            persist = ::persistStoreSignatureSidecar,
+            persist = { jar -> withContext(Dispatchers.IO) { persistStoreSignatureSidecar(jar) } },
         )
 
     /**
