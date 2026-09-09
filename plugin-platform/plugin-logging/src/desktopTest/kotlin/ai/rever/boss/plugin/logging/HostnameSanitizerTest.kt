@@ -5,10 +5,23 @@ import kotlin.test.assertEquals
 
 class HostnameSanitizerTest {
     @Test
+    fun `sentence final private hosts are redacted without consuming punctuation`() {
+        assertEquals("Could not reach [HOST].", LogSanitizer.sanitizeExceptionMessage("Could not reach Proxy.Corp.Internal."))
+        assertEquals("[HOST]", LogSanitizer.sanitizeExceptionMessage("Status.INTERNAL"))
+    }
+
+    @Test
+    fun `private and public hostname ports remain diagnostic`() {
+        listOf("proxy.corp.internal", "api.risaboss.com").forEach { host ->
+            assertEquals("[HOST]:443", LogSanitizer.sanitizeExceptionMessage("$host:443"), host)
+        }
+    }
+
+    @Test
     fun `mixed case private hosts are completely redacted before the public matcher`() {
         listOf("Proxy.Corp.Internal", "Acme.corp.internal", "INTERNAL.Service.LOCAL").forEach { host ->
-            assertEquals("[HOST]:3128", LogSanitizer.sanitizeExceptionMessage("$host:3128"))
-            assertEquals("Caused by: [HOST]", LogSanitizer.sanitizeStackTrace("Caused by: $host"))
+            assertEquals("[HOST]:3128", LogSanitizer.sanitizeExceptionMessage("$host:3128"), host)
+            assertEquals("Caused by: [HOST]", LogSanitizer.sanitizeStackTrace("Caused by: $host"), host)
         }
     }
 

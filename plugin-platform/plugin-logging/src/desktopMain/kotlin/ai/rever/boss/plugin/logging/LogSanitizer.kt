@@ -232,11 +232,15 @@ object LogSanitizer {
     /**
      * Private DNS names that can reveal an organisation's internal topology in
      * network failures. Kept to the private-style suffixes measured in #109 so
-     * ordinary dotted prose and package names remain diagnostic.
+     * ordinary dotted prose and package names remain diagnostic. Case folding intentionally
+     * also masks ambiguous constants such as `Status.INTERNAL`: free text cannot distinguish
+     * these from private DNS names. Run before the public matcher to avoid exposing a mixed-case
+     * leading label. Both hostname passes preserve ports because they remain useful diagnostics.
+     * A terminal period is punctuation (or a DNS root dot); a following label blocks the match.
      */
     private val privateHostnamePattern =
         Regex(
-            """(?<![A-Za-z0-9_.-])(?:[A-Za-z0-9-]+\.)+(?:internal|local)(?![A-Za-z0-9_.-])""",
+            """(?<![A-Za-z0-9_.-])(?:[A-Za-z0-9-]+\.)+(?:internal|local)(?![A-Za-z0-9_-])(?!\.[A-Za-z0-9_-])""",
             RegexOption.IGNORE_CASE,
         )
 
@@ -268,13 +272,15 @@ object LogSanitizer {
      * guard. This public-host matcher remains case-sensitive, so
      * mixed-case public hosts are untouched. The preceding private-host pass handles complete
      * mixed-case `.internal`/`.local` names and preserves their ports. Unlisted suffixes and IP literals also
-     * remain unchanged. This is selected lowercase-host redaction, not complete DNS redaction.
+     * remain unchanged. Ports are preserved, as in the private-host pass. The private suffixes
+     * remain here to preserve existing lowercase matching outside the stricter private boundaries.
+     * This is selected lowercase-host redaction, not complete DNS redaction.
      */
     private val hostnamePattern =
         Regex(
             """\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+""" +
                 """(?:internal|local|com|net|org|io|dev|app|co|ai|gov|edu|mil|info|biz)\b""" +
-                """(?::\d{1,5})?(?!\.[A-Za-z])""",
+                """(?!\.[A-Za-z])""",
         )
 
     /**
