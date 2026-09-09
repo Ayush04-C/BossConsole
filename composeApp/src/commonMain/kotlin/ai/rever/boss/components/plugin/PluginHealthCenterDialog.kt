@@ -1,5 +1,6 @@
 package ai.rever.boss.components.plugin
 
+import ai.rever.boss.plugin.api.PluginLoaderDelegate
 import ai.rever.boss.plugin.sandbox.ui.PluginCrashRegistry
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
@@ -24,6 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -56,10 +58,19 @@ internal data class PluginHealthRow(
     val action: PluginHealthAction? = null,
 )
 
+internal class PluginHealthOperationState {
+    var workingPluginId by mutableStateOf<String?>(null)
+    var actionError by mutableStateOf<String?>(null)
+}
+
+@Composable
+internal fun rememberPluginHealthOperationState(): PluginHealthOperationState = remember { PluginHealthOperationState() }
+
 /** Host-owned operational surface for plugin status and existing safe recovery actions. */
 @Composable
 internal fun PluginHealthCenterDialog(
     manager: DynamicPluginManager?,
+    delegate: PluginLoaderDelegate?,
     onDismiss: () -> Unit,
 ) {
     val pluginStates by (manager?.pluginStates ?: return).collectAsState()
@@ -69,35 +80,35 @@ internal fun PluginHealthCenterDialog(
     val incompatible = pluginStates.keys.filterTo(mutableSetOf()) { PluginCrashRegistry.isIncompatible(it) }
     val rows = pluginHealthRows(pluginStates, gates, crashedPluginIds, inaccessible, incompatible)
     val scope = rememberCoroutineScope()
-    var workingPluginId by mutableStateOf<String?>(null)
-    var actionError by mutableStateOf<String?>(null)
+    val operation = rememberPluginHealthOperationState()
 
     BossDialog(
-        onDismissRequest = { if (workingPluginId == null) onDismiss() },
+        onDismissRequest = { if (operation.workingPluginId == null) onDismiss() },
         properties =
             DialogProperties(
-                dismissOnBackPress = workingPluginId == null,
-                dismissOnClickOutside = workingPluginId == null,
+                dismissOnBackPress = operation.workingPluginId == null,
+                dismissOnClickOutside = operation.workingPluginId == null,
                 usePlatformDefaultWidth = false,
             ),
     ) {
         PluginHealthCenterCard(
             rows = rows,
-            actionError = actionError,
-            workingPluginId = workingPluginId,
+            actionError = operation.actionError,
+            workingPluginId = operation.workingPluginId,
             onDismiss = onDismiss,
             onAction = { row, action ->
-                if (workingPluginId == null) {
-                    workingPluginId = row.pluginId
-                    actionError = null
+                if (operation.workingPluginId == null) {
+                    operation.workingPluginId = row.pluginId
+                    operation.actionError = null
                     launchHealthAction(
                         scope = scope,
                         manager = manager,
+                        delegate = delegate,
                         row = row,
                         action = action,
                         onFinished = { error ->
-                            actionError = error
-                            workingPluginId = null
+                            operation.actionError = error
+                            operation.workingPluginId = null
                         },
                     )
                 }
@@ -184,6 +195,7 @@ private fun PluginHealthRows(
 private fun launchHealthAction(
     scope: kotlinx.coroutines.CoroutineScope,
     manager: DynamicPluginManager,
+    delegate: PluginLoaderDelegate?,
     row: PluginHealthRow,
     action: PluginHealthAction,
     onFinished: (String?) -> Unit,
@@ -192,10 +204,12 @@ private fun launchHealthAction(
         val result =
             runCatching {
                 if (currentHealthAction(manager, row.pluginId) == action) {
-                    when (action) {
-                        PluginHealthAction.ENABLE -> manager.enablePlugin(row.pluginId)
-                        PluginHealthAction.RELOAD -> manager.reloadPlugin(row.pluginId).map { Unit }
+                    // The delegate persists Enable and coordinates reload teardown and refresh.
+                    val succeeded = when (action) {
+                        PluginHealthAction.ENABLE -> delegate?.enablePlugin(row.pluginId) == true
+                        PluginHealthAction.RELOAD -> delegate?.reloadPlugin(row.pluginId) != null
                     }
+                    if (succeeded) Result.success(Unit) else Result.failure(IllegalStateException("Recovery failed"))
                 } else {
                     Result.failure(IllegalStateException("Plugin health changed"))
                 }
