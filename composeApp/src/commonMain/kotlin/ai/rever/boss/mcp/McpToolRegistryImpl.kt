@@ -297,6 +297,7 @@ internal fun mcpToolPermitted(
  * [onFault] is how a kill-switch persistence failure reaches the operator (the
  * façade turns it into a status-bar message); it is also mirrored into [fault].
  */
+@Suppress("LongParameterList") // Testable host and governance dependencies are intentionally injected.
 internal class McpToolRegistryCore(
     private val disabledFile: File?,
     private val invokeTimeoutMs: Long = 60_000L,
@@ -304,9 +305,7 @@ internal class McpToolRegistryCore(
     val policyEngine: McpPolicyEngine = McpPolicyEngine(),
     val approvalBus: McpApprovalBus = McpApprovalBus(),
     val ledger: McpOperationLedger = McpOperationLedger(),
-    private val activityStore: McpActivityStore = McpActivityStore(),
-    private val wallClockMs: () -> Long = System::currentTimeMillis,
-    private val monotonicNowNs: () -> Long = System::nanoTime,
+    private val activity: McpActivityTracker = McpActivityTracker(),
 ) {
     private val logger = BossLogger.forComponent("McpToolRegistry")
 
@@ -340,9 +339,9 @@ internal class McpToolRegistryCore(
      * truth to keep on screen. See [McpKillSwitchFault].
      */
     val fault: StateFlow<McpKillSwitchFault?> = _fault.asStateFlow()
-    val activityEvents: StateFlow<List<McpActivityEvent>> = activityStore.events
+    val activityEvents: StateFlow<List<McpActivityEvent>> = activity.events
 
-    fun clearActivity() = activityStore.clear()
+    fun clearActivity() = activity.clear()
 
     /**
      * Set when [loadDisabled] found a file it could not parse. While it is up,
@@ -665,7 +664,8 @@ internal class McpToolRegistryCore(
     /** Mirrors host RBAC. The rule itself is [mcpToolPermitted], which is where it is tested. */
     private fun permitted(def: McpToolDefinition): Boolean = mcpToolPermitted(def, isAdmin, permissions)
 
-    @Suppress("LongMethod") // Keep authorization and execution inside the same cancellation audit boundary.
+    @Suppress("LongMethod", "CyclomaticComplexMethod")
+    // Keep authorization and execution inside the same cancellation audit boundary.
     suspend fun invoke(
         toolName: String,
         arguments: String,
@@ -702,7 +702,7 @@ internal class McpToolRegistryCore(
                             policyEngine.trustForSession(toolName)
                         }
                         executionStarted = true
-                        activityStartedAtNs = monotonicNowNs()
+                        activityStartedAtNs = activity.nowNs()
                         executeAuthorized(tool, args).also { activityOutcome = it.second }.first
                     }
                 }
@@ -747,12 +747,11 @@ internal class McpToolRegistryCore(
         startedAtNs: Long,
     ) {
         try {
-            activityStore.append(
-                completedAtEpochMs = wallClockMs(),
-                durationMs = (monotonicNowNs() - startedAtNs).coerceAtLeast(0) / 1_000_000,
+            activity.record(
                 toolName = tool.definition.name,
                 providerId = tool.providerId,
                 outcome = outcome,
+                startedAtNs = startedAtNs,
             )
         } catch (_: Exception) {
             logger.warn(LogCategory.SYSTEM, "Could not record MCP activity")
@@ -799,7 +798,8 @@ internal class McpToolRegistryCore(
                     }
 
                     McpApprovalDecision.QueueFull -> {
-                        McpApprovalDisposition.QUEUE_FULL to "MCP approval queue is full; no operator decision was made"
+                        McpApprovalDisposition.QUEUE_FULL to
+                            "MCP approval queue is full; no operator decision was made"
                     }
 
                     McpApprovalDecision.Timeout -> {
@@ -819,7 +819,10 @@ internal class McpToolRegistryCore(
                 it to if (it.isError) McpActivityOutcome.ERROR else McpActivityOutcome.SUCCESS
             }
         } catch (_: TimeoutCancellationException) {
-            McpToolResult("Tool '${tool.definition.name}' timed out after ${invokeTimeoutMs / 1000}s", isError = true) to
+            McpToolResult(
+                "Tool '${tool.definition.name}' timed out after ${invokeTimeoutMs / 1000}s",
+                isError = true,
+            ) to
                 McpActivityOutcome.TIMEOUT
         } catch (cancelled: CancellationException) {
             throw cancelled

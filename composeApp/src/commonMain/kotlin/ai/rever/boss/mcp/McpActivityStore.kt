@@ -70,3 +70,31 @@ internal class McpActivityStore(
         const val CAPACITY = 100
     }
 }
+
+/** Couples the activity store with its clocks so registry construction stays focused on host services. */
+internal class McpActivityTracker(
+    private val store: McpActivityStore = McpActivityStore(),
+    private val wallClockMs: () -> Long = System::currentTimeMillis,
+    private val monotonicNowNs: () -> Long = System::nanoTime,
+) {
+    val events: StateFlow<List<McpActivityEvent>> = store.events
+
+    fun clear() = store.clear()
+
+    fun nowNs(): Long = monotonicNowNs()
+
+    fun record(
+        toolName: String,
+        providerId: String,
+        outcome: McpActivityOutcome,
+        startedAtNs: Long,
+    ) {
+        store.append(
+            completedAtEpochMs = wallClockMs(),
+            durationMs = (monotonicNowNs() - startedAtNs).coerceAtLeast(0) / 1_000_000,
+            toolName = toolName,
+            providerId = providerId,
+            outcome = outcome,
+        )
+    }
+}

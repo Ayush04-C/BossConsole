@@ -607,9 +607,12 @@ class McpToolRegistryCoreTest {
             val core =
                 McpToolRegistryCore(
                     disabledFile = null,
-                    activityStore = store,
-                    wallClockMs = { 1_700_000_000_123L },
-                    monotonicNowNs = { monotonicNs.also { monotonicNs += 12_000_000L } },
+                    activity =
+                        McpActivityTracker(
+                            store = store,
+                            wallClockMs = { 1_700_000_000_123L },
+                            monotonicNowNs = { monotonicNs.also { monotonicNs += 12_000_000L } },
+                        ),
                 )
             core.registerProvider(provider("provider.exact", echoTool("safe_tool")))
 
@@ -624,7 +627,7 @@ class McpToolRegistryCoreTest {
     fun `declared and thrown errors record error without retaining sensitive values`() =
         runBlocking {
             val store = McpActivityStore()
-            val core = McpToolRegistryCore(disabledFile = null, activityStore = store)
+            val core = McpToolRegistryCore(disabledFile = null, activity = McpActivityTracker(store))
             core.registerProvider(
                 provider(
                     "p1",
@@ -653,7 +656,11 @@ class McpToolRegistryCoreTest {
         runBlocking {
             val timeoutStore = McpActivityStore()
             val timeoutCore =
-                McpToolRegistryCore(disabledFile = null, invokeTimeoutMs = 10L, activityStore = timeoutStore)
+                McpToolRegistryCore(
+                    disabledFile = null,
+                    invokeTimeoutMs = 10L,
+                    activity = McpActivityTracker(timeoutStore),
+                )
             timeoutCore.registerProvider(
                 provider("p1", echoTool("hang", handler = McpToolHandler { delay(1_000); McpToolResult("no") })),
             )
@@ -661,7 +668,8 @@ class McpToolRegistryCoreTest {
             assertEquals(McpActivityOutcome.TIMEOUT, assertSingleActivity(timeoutStore).outcome)
 
             val cancellationStore = McpActivityStore()
-            val cancellationCore = McpToolRegistryCore(disabledFile = null, activityStore = cancellationStore)
+            val cancellationCore =
+                McpToolRegistryCore(disabledFile = null, activity = McpActivityTracker(cancellationStore))
             cancellationCore.registerProvider(
                 provider("p1", echoTool("slow", handler = McpToolHandler { delay(1_000); McpToolResult("no") })),
             )
@@ -684,7 +692,7 @@ class McpToolRegistryCoreTest {
     fun `lookup miss records no activity`() =
         runBlocking {
             val store = McpActivityStore()
-            val core = McpToolRegistryCore(disabledFile = null, activityStore = store)
+            val core = McpToolRegistryCore(disabledFile = null, activity = McpActivityTracker(store))
             assertTrue(core.invoke("absent", "{}").isError)
             assertTrue(store.events.value.isEmpty())
         }
