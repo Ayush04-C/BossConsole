@@ -41,7 +41,7 @@ internal fun pluginHealthRows(
 
 private fun healthRowFor(input: HealthRowInputs): PluginHealthRow =
     input.gate?.let { gateRow(input, it) }
-        ?: input.info?.let { infoRow(input, it) }
+        ?: input.info?.let { infoRow(input, it).copy(pluginId = input.pluginId) }
         ?: unknownRow(input)
 
 private fun gateRow(
@@ -178,15 +178,36 @@ private fun reloadActionFor(info: DynamicPluginInfo): PluginHealthAction? =
         null
     }
 
-/** Watchdog disables stop the sandbox without changing the manager's loaded entry. */
-internal fun healthStatesWithSandboxDisables(
-    states: Map<String, DynamicPluginInfo>,
+/** Watchdog stops retain registrations: recover through full reload, never bare enable. */
+internal fun healthRowsWithSandboxDisables(
+    rows: List<PluginHealthRow>,
     disabledPluginIds: Set<String>,
-): Map<String, DynamicPluginInfo> =
-    states.mapValues { (id, info) ->
-        if (id in disabledPluginIds && info.state == PluginState.LOADED) {
-            info.copy(state = PluginState.DISABLED, enabled = false)
+): List<PluginHealthRow> =
+    rows.map { row ->
+        if (row.pluginId in disabledPluginIds && row.status == PluginHealthStatus.HEALTHY) {
+            val requiresRestart = HotReloadPolicy.requiresRestartInsteadOfHotReload(row.pluginId)
+            row.copy(
+                status = PluginHealthStatus.NEEDS_ATTENTION,
+                detail =
+                    if (requiresRestart) {
+                        "Restart BOSS to recover this plugin."
+                    } else {
+                        "The plugin stopped and needs recovery."
+                    },
+                action = if (requiresRestart) null else PluginHealthAction.RELOAD,
+            )
         } else {
-            info
+            row
         }
     }
+
+/** Evaluate access directly, including the legacy admin-only gate omitted by permission banners. */
+internal fun healthInaccessiblePluginIds(
+    states: Map<String, DynamicPluginInfo>,
+    isAdmin: Boolean,
+    permissions: Set<String>,
+): Set<String> =
+    states
+        .filterValues { info ->
+            !pluginAccessAllowed(isAdmin, permissions, info.manifest.requiresAdmin, info.manifest.requiredPermissions)
+        }.keys

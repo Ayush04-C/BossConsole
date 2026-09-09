@@ -185,19 +185,40 @@ class PluginHealthCenterTest {
     }
 
     @Test
-    fun `watchdog disabled sandbox is not reported as healthy by its loaded manager entry`() {
+    fun `watchdog disabled sandbox offers full reload instead of registering twice`() {
         val states = mapOf("notes" to plugin("notes", "Notes", PluginState.LOADED))
-        val row =
-            pluginHealthRows(
-                healthStatesWithSandboxDisables(states, setOf("notes")),
-                emptyMap(),
-                emptySet(),
-                emptySet(),
-                emptySet(),
-            ).single()
-        assertEquals(PluginHealthStatus.UNAVAILABLE, row.status)
-        assertEquals(PluginHealthAction.ENABLE, row.action)
-        assertEquals(states, healthStatesWithSandboxDisables(states, emptySet()))
+        val healthy = pluginHealthRows(states, emptyMap(), emptySet(), emptySet(), emptySet())
+        val row = healthRowsWithSandboxDisables(healthy, setOf("notes")).single()
+        assertEquals(PluginHealthStatus.NEEDS_ATTENTION, row.status)
+        assertEquals(PluginHealthAction.RELOAD, row.action)
+        assertEquals(healthy, healthRowsWithSandboxDisables(healthy, emptySet()))
+    }
+
+    @Test
+    fun `watchdog recovery respects native restart and access restrictions`() {
+        val id = HotReloadPolicy.NOT_HOT_RELOADABLE.first()
+        val states = mapOf(id to plugin(id, "Browser", PluginState.LOADED))
+        val healthy = pluginHealthRows(states, emptyMap(), emptySet(), emptySet(), emptySet())
+        val row = healthRowsWithSandboxDisables(healthy, setOf(id)).single()
+        assertNull(row.action)
+        assertEquals("Restart BOSS to recover this plugin.", row.detail)
+        val hidden = pluginHealthRows(states, emptyMap(), emptySet(), setOf(id), emptySet())
+        assertEquals(hidden, healthRowsWithSandboxDisables(hidden, setOf(id)))
+    }
+
+    @Test
+    fun `admin-only entries explain access and preserve manager row identity`() {
+        val info =
+            plugin("manifest-id", "Admin", PluginState.DISABLED).let {
+                it.copy(manifest = it.manifest.copy(requiresAdmin = true), enabled = true)
+            }
+        val states = mapOf("manager-id" to info)
+        val hidden = healthInaccessiblePluginIds(states, false, emptySet())
+        val row = pluginHealthRows(states, emptyMap(), emptySet(), hidden, emptySet()).single()
+        assertEquals("manager-id", row.pluginId)
+        assertEquals("Access is required for this plugin.", row.detail)
+        assertNull(row.action)
+        assertEquals(emptySet(), healthInaccessiblePluginIds(states, true, emptySet()))
     }
 
     private fun plugin(

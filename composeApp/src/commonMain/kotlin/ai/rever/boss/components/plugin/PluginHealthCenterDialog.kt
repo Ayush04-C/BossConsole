@@ -7,6 +7,7 @@ import ai.rever.boss.plugin.sandbox.SandboxState
 import ai.rever.boss.plugin.sandbox.ui.PluginCrashRegistry
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
+import ai.rever.boss.services.auth.AuthStateManager
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -132,25 +133,25 @@ private fun observeHealthRows(manager: DynamicPluginManager): List<PluginHealthR
     val pluginStates by manager.pluginStates.collectAsState()
     val gates by PluginLoadGateRegistry.gates.collectAsState()
     val crashedPluginIds = PluginCrashRegistry.crashedPlugins.keys
-    val inaccessible = manager.getInaccessiblePlugins().mapTo(mutableSetOf()) { it.pluginId }
-    val incompatible =
-        (pluginStates.keys + crashedPluginIds).filterTo(mutableSetOf()) { PluginCrashRegistry.isIncompatible(it) }
-    val sandboxDisabled =
-        pluginStates.keys.filterTo(mutableSetOf()) { id ->
-            key(id) {
+    val user by AuthStateManager.currentUser.collectAsState()
+    val inaccessible =
+        healthInaccessiblePluginIds(pluginStates, user?.isAdmin == true, user?.permissions?.toSet() ?: emptySet())
+    val incompatible by PluginCrashRegistry.incompatiblePlugins.collectAsState()
+    val sandboxDisabled = mutableSetOf<String>()
+    for (id in pluginStates.keys) {
+        key(id) {
+            val state =
                 manager.sandboxManager
                     .getSandbox(id)
                     ?.state
                     ?.collectAsState()
-                    ?.value == SandboxState.DISABLED
-            }
+                    ?.value
+            if (state == SandboxState.DISABLED) sandboxDisabled.add(id)
         }
-    return pluginHealthRows(
-        healthStatesWithSandboxDisables(pluginStates, sandboxDisabled),
-        gates,
-        crashedPluginIds,
-        inaccessible,
-        incompatible,
+    }
+    return healthRowsWithSandboxDisables(
+        pluginHealthRows(pluginStates, gates, crashedPluginIds, inaccessible, incompatible),
+        sandboxDisabled,
     )
 }
 
@@ -285,21 +286,17 @@ private fun currentHealthAction(
     pluginId: String,
 ): PluginHealthAction? {
     val states = manager.pluginStates.value
-    return pluginHealthRows(
-        pluginStates =
-            healthStatesWithSandboxDisables(
-                states,
-                states.keys.filterTo(mutableSetOf()) { id ->
-                    manager.sandboxManager
-                        .getSandbox(id)
-                        ?.state
-                        ?.value == SandboxState.DISABLED
-                },
-            ),
-        loadGates = PluginLoadGateRegistry.gates.value,
-        crashedPluginIds = states.keys.filterTo(mutableSetOf()) { PluginCrashRegistry.hasCrashed(it) },
-        inaccessiblePluginIds = manager.getInaccessiblePlugins().mapTo(mutableSetOf()) { it.pluginId },
-        incompatiblePluginIds = states.keys.filterTo(mutableSetOf()) { PluginCrashRegistry.isIncompatible(it) },
+    val user = AuthStateManager.currentUser.value
+    return healthRowsWithSandboxDisables(
+        pluginHealthRows(
+            pluginStates = states,
+            loadGates = PluginLoadGateRegistry.gates.value,
+            crashedPluginIds = states.keys.filterTo(mutableSetOf()) { PluginCrashRegistry.hasCrashed(it) },
+            inaccessiblePluginIds =
+                healthInaccessiblePluginIds(states, user?.isAdmin == true, user?.permissions?.toSet() ?: emptySet()),
+            incompatiblePluginIds = PluginCrashRegistry.incompatiblePlugins.value,
+        ),
+        states.keys.filterTo(mutableSetOf()) { manager.sandboxManager.isPluginDisabled(it) },
     ).firstOrNull { it.pluginId == pluginId }?.action
 }
 
