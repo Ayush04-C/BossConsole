@@ -173,6 +173,8 @@ class UpdateManager private constructor(
         // a downloaded update waits for install, during install, and after an
         // install that's pending a restart (where the version still reads as
         // "newer" than the running build).
+        // Error is deliberately rechecked: suppression clears the refusal banner
+        // on the next automatic check rather than preserving it indefinitely.
         val current = _updateState.value
         if (current is UpdateState.Downloading || current is UpdateState.ReadyToInstall ||
             current is UpdateState.Installing || current is UpdateState.RestartRequired
@@ -248,8 +250,8 @@ class UpdateManager private constructor(
     }
 
     /**
-     * The coroutine running the current download, so [cancelDownload] has
-     * something to cancel.
+     * The coroutine holding download ownership, not a queued request. Updated
+     * only inside [artifactMutex], so Cancel always reaches the active transfer.
      *
      * @Volatile: written on the manager's scope and read from whichever thread
      * the download center's Cancel arrives on.
@@ -264,12 +266,12 @@ class UpdateManager private constructor(
      * in-flight download.
      */
     fun downloadUpdateInBackground(updateInfo: UpdateInfo) {
-        downloadJob = launchInBackground { downloadUpdate(updateInfo) }
+        launchInBackground { downloadUpdate(updateInfo) }
     }
 
     /** As [downloadUpdateInBackground], for a specific version (upgrade or downgrade). */
     fun downloadSpecificVersionInBackground(versionInfo: VersionInfo) {
-        downloadJob = launchInBackground { downloadSpecificVersion(versionInfo) }
+        launchInBackground { downloadSpecificVersion(versionInfo) }
     }
 
     /**
@@ -299,7 +301,7 @@ class UpdateManager private constructor(
     suspend fun discardDownload() {
         val expected = _updateState.value as? UpdateState.ReadyToInstall ?: return
         artifactMutex.withLock {
-            if (_updateState.value == expected) discardStagedDownload()
+            if (_updateState.value === expected) discardStagedDownload()
         }
     }
 
@@ -332,8 +334,21 @@ class UpdateManager private constructor(
      * Download the available update
      */
     suspend fun downloadUpdate(updateInfo: UpdateInfo): UpdateResult =
-        artifactMutex.withLock {
+        withDownloadOwnership {
             downloadAvailableUpdate(updateInfo)
+        }
+
+    private suspend fun withDownloadOwnership(operation: suspend () -> UpdateResult): UpdateResult =
+        artifactMutex.withLock {
+            if (_updateState.value == UpdateState.RestartRequired) {
+                return@withLock UpdateResult.Error("Restart BOSS before downloading another update")
+            }
+            downloadJob = currentCoroutineContext()[Job]
+            try {
+                operation()
+            } finally {
+                downloadJob = null
+            }
         }
 
     private suspend fun downloadAvailableUpdate(updateInfo: UpdateInfo): UpdateResult =
@@ -373,7 +388,7 @@ class UpdateManager private constructor(
      * Download a specific version (for upgrades or downgrades)
      */
     suspend fun downloadSpecificVersion(versionInfo: VersionInfo): UpdateResult =
-        artifactMutex.withLock { downloadSelectedVersion(versionInfo) }
+        withDownloadOwnership { downloadSelectedVersion(versionInfo) }
 
     private suspend fun downloadSelectedVersion(versionInfo: VersionInfo): UpdateResult =
         try {
@@ -435,7 +450,7 @@ class UpdateManager private constructor(
     suspend fun installUpdate(downloadPath: String): Boolean {
         val expected = _updateState.value as? UpdateState.ReadyToInstall ?: return false
         return artifactMutex.withLock {
-            if (_updateState.value == expected) installStagedUpdate(downloadPath) else false
+            if (_updateState.value === expected) installStagedUpdate(downloadPath) else false
         }
     }
 
@@ -472,7 +487,9 @@ class UpdateManager private constructor(
                     updateService.installUpdate(claimed.downloadPath)
                 }
             if (outcome.succeeded) {
-                _updateState.compareAndSet(UpdateState.Installing, UpdateState.RestartRequired)
+                if (!_updateState.compareAndSet(UpdateState.Installing, UpdateState.RestartRequired)) {
+                    logger.warn(LogCategory.SYSTEM, "Preserving a newer update state after an installation succeeded")
+                }
             } else {
                 applyInstallFailure(outcome, claimed)
             }

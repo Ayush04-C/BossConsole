@@ -71,7 +71,7 @@ class UpdateManagerUnsupportedOsCycleTest {
                     checkOperation = { infoFor(offered) },
                     downloadOperation = { _, _ ->
                         downloads++
-                        "/tmp/BOSS-unsupported.dmg"
+                        File(settingsDir, "BOSS-unsupported.dmg").absolutePath
                     },
                 ).also { this@UpdateManagerUnsupportedOsCycleTest.manager = it }
 
@@ -84,7 +84,7 @@ class UpdateManagerUnsupportedOsCycleTest {
             assertTrue(manager.updateState.value is UpdateState.ReadyToInstall, "staged before install")
 
             // Install refuses it as unsupported-OS.
-            val installed = manager.installUpdate("/tmp/BOSS-unsupported.dmg")
+            val installed = manager.installUpdate(File(settingsDir, "BOSS-unsupported.dmg").absolutePath)
             assertFalse(installed, "an unsupported-OS refusal is not a successful install")
 
             val errorState = manager.updateState.value
@@ -130,12 +130,12 @@ class UpdateManagerUnsupportedOsCycleTest {
                         InstallOutcome(succeeded = false, errorMessage = "Disk full")
                     },
                     checkOperation = { infoFor(refusedVersion) },
-                    downloadOperation = { _, _ -> "/tmp/BOSS-ordinary.dmg" },
+                    downloadOperation = { _, _ -> File(settingsDir, "BOSS-ordinary.dmg").absolutePath },
                 ).also { this@UpdateManagerUnsupportedOsCycleTest.manager = it }
 
             manager.checkForUpdates(force = false)
             manager.downloadUpdate(infoFor(refusedVersion))
-            manager.installUpdate("/tmp/BOSS-ordinary.dmg")
+            manager.installUpdate(File(settingsDir, "BOSS-ordinary.dmg").absolutePath)
 
             val errorState = manager.updateState.value
             assertTrue(errorState is UpdateState.Error)

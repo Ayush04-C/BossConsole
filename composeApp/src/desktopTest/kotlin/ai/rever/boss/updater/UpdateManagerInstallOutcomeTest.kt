@@ -4,8 +4,10 @@ import ai.rever.boss.utils.Version
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import java.io.File
 import kotlin.io.path.createTempDirectory
 import kotlin.test.AfterTest
@@ -54,7 +56,7 @@ class UpdateManagerInstallOutcomeTest {
         runBlocking {
             val update = update("9.5.9")
             val message = "This update requires macOS 13.0 or later"
-            val downloadPath = "/updates/BOSS-9.5.9.dmg"
+            val downloadPath = ownedPath("BOSS-9.5.9.dmg")
             installOutcome =
                 InstallOutcome(
                     succeeded = false,
@@ -76,7 +78,7 @@ class UpdateManagerInstallOutcomeTest {
     fun `generic install failure remains visible without dismissing the version`() =
         runBlocking {
             val update = update("9.5.9")
-            val downloadPath = "/updates/BOSS-9.5.9.dmg"
+            val downloadPath = ownedPath("BOSS-9.5.9.dmg")
             installOutcome = InstallOutcome(succeeded = false, errorMessage = "Could not mount update")
             manager.stageDownloadedUpdate(update, downloadPath)
 
@@ -104,9 +106,9 @@ class UpdateManagerInstallOutcomeTest {
                     UpdateInstallOperation { installOutcome },
                     checkOperation = { available },
                 )
-            manager.stageDownloadedUpdate(refused, "/tmp/BOSS-9.5.9.dmg")
+            manager.stageDownloadedUpdate(refused, ownedPath("BOSS-9.5.9.dmg"))
 
-            assertFalse(manager.installUpdate("/tmp/BOSS-9.5.9.dmg"))
+            assertFalse(manager.installUpdate(ownedPath("BOSS-9.5.9.dmg")))
             assertEquals(UpdateResult.NoUpdateAvailable, manager.checkForUpdates())
             assertIs<UpdateResult.UpdateAvailable>(manager.checkForUpdates(force = true))
 
@@ -151,28 +153,35 @@ class UpdateManagerInstallOutcomeTest {
         }
 
     @Test
-    fun `refusal remembers the claimed version even when another download finishes`() =
+    fun `out of protocol restaging keeps claimed version identity and replacement state`() =
         runBlocking {
             installOutcome = InstallOutcome(false, "Unsupported macOS", InstallFailureReason.UnsupportedOs)
-            manager.stageDownloadedUpdate(update("9.5.9"), "old.dmg")
-            duringInstall = { manager.stageDownloadedUpdate(update("9.5.10"), "new.dmg") }
+            manager.stageDownloadedUpdate(update("9.5.9"), ownedPath("old.dmg"))
+            // Deliberately bypass the production mutex to pin its defensive fallback.
+            duringInstall = { manager.stageDownloadedUpdate(update("9.5.10"), ownedPath("new.dmg")) }
 
-            assertFalse(manager.installUpdate("old.dmg"))
+            assertFalse(manager.installUpdate(ownedPath("old.dmg")))
 
             assertEquals("9.5.9", UpdateSettings.lastDismissedVersion)
-            assertEquals("new.dmg", assertIs<UpdateState.ReadyToInstall>(manager.updateState.value).downloadPath)
+            assertEquals(
+                ownedPath("new.dmg"),
+                assertIs<UpdateState.ReadyToInstall>(manager.updateState.value).downloadPath,
+            )
         }
 
     @Test
     fun `stale install action cannot claim a different staged artifact`() =
         runBlocking {
-            manager.stageDownloadedUpdate(update("9.5.10"), "new.dmg")
+            manager.stageDownloadedUpdate(update("9.5.10"), ownedPath("new.dmg"))
 
-            assertFalse(manager.installUpdate("old.dmg"))
+            assertFalse(manager.installUpdate(ownedPath("old.dmg")))
 
             assertNull(installedPath)
             assertNull(UpdateSettings.lastDismissedVersion)
-            assertEquals("new.dmg", assertIs<UpdateState.ReadyToInstall>(manager.updateState.value).downloadPath)
+            assertEquals(
+                ownedPath("new.dmg"),
+                assertIs<UpdateState.ReadyToInstall>(manager.updateState.value).downloadPath,
+            )
         }
 
     @Test
@@ -180,9 +189,9 @@ class UpdateManagerInstallOutcomeTest {
         runBlocking {
             UpdateSettings.lastDismissedVersion = "9.5.9"
             installOutcome = InstallOutcome(false, "Unsupported macOS", InstallFailureReason.UnsupportedOs)
-            manager.stageDownloadedUpdate(update("9.5.7"), "downgrade.dmg")
+            manager.stageDownloadedUpdate(update("9.5.7"), ownedPath("downgrade.dmg"))
 
-            assertFalse(manager.installUpdate("downgrade.dmg"))
+            assertFalse(manager.installUpdate(ownedPath("downgrade.dmg")))
 
             assertEquals("9.5.9", UpdateSettings.lastDismissedVersion)
             assertEquals("Unsupported macOS", assertIs<UpdateState.Error>(manager.updateState.value).message)
@@ -192,8 +201,8 @@ class UpdateManagerInstallOutcomeTest {
     fun `cancellation during persistence keeps the installer refusal visible`() =
         runBlocking {
             installOutcome = InstallOutcome(false, "Unsupported macOS", InstallFailureReason.UnsupportedOs)
-            manager.stageDownloadedUpdate(update("9.5.9"), "update.dmg")
-            val installJob = launch(start = CoroutineStart.LAZY) { manager.installUpdate("update.dmg") }
+            manager.stageDownloadedUpdate(update("9.5.9"), ownedPath("update.dmg"))
+            val installJob = launch(start = CoroutineStart.LAZY) { manager.installUpdate(ownedPath("update.dmg")) }
             duringInstall = { installJob.cancel() }
 
             installJob.start()
@@ -256,7 +265,7 @@ class UpdateManagerInstallOutcomeTest {
         }
 
     @Test
-    fun `cleanup cannot delete a newly staged artifact that reused the refused path`() =
+    fun `out of protocol restaging preserves replacement bytes at the same path`() =
         runBlocking {
             val staging = createRestrictedDir(defaultStagingDir())
             val artifact = File.createTempFile("refused-reused-", ".dmg", staging).apply { writeText("old") }
@@ -346,6 +355,86 @@ class UpdateManagerInstallOutcomeTest {
                 artifact.delete()
             }
         }
+
+    @Test
+    fun `cancel targets the active download rather than the queued version selection`() =
+        runBlocking {
+            val first = update("9.5.9")
+            val firstStarted = CompletableDeferred<Unit>()
+            val firstCanceled = CompletableDeferred<Unit>()
+            val secondStarted = CompletableDeferred<Unit>()
+            val secondCanceled = CompletableDeferred<Unit>()
+            manager.shutdown()
+            manager =
+                UpdateManager(
+                    UpdateInstallOperation { InstallOutcome(false) },
+                    checkOperation = { first },
+                    downloadOperation = { info, _ ->
+                        val isFirst = info.latestVersion == first.latestVersion
+                        (if (isFirst) firstStarted else secondStarted).complete(Unit)
+                        try {
+                            awaitCancellation()
+                        } finally {
+                            (if (isFirst) firstCanceled else secondCanceled).complete(Unit)
+                        }
+                    },
+                )
+            try {
+                withTimeout(5_000) {
+                    manager.downloadUpdateInBackground(first)
+                    firstStarted.await()
+                    manager.downloadSpecificVersionInBackground(
+                        VersionInfo(Version.parse("9.5.10")!!, "", 0, "", "", false, false),
+                    )
+                    manager.cancelDownload()
+                    firstCanceled.await()
+                    secondStarted.await()
+                    manager.cancelDownload()
+                    secondCanceled.await()
+                }
+            } finally {
+                manager.shutdown()
+            }
+        }
+
+    @Test
+    fun `downloads queued behind successful installation preserve the restart action`() =
+        runBlocking {
+            val releaseInstall = CompletableDeferred<Unit>()
+            var downloads = 0
+            manager.shutdown()
+            manager =
+                UpdateManager(
+                    UpdateInstallOperation {
+                        releaseInstall.await()
+                        InstallOutcome(true)
+                    },
+                    checkOperation = { update("9.5.10") },
+                    downloadOperation = { _, _ ->
+                        downloads++
+                        ownedPath("unexpected.dmg")
+                    },
+                )
+            manager.stageDownloadedUpdate(update("9.5.9"), ownedPath("installed.dmg"))
+            val installation =
+                async(start = CoroutineStart.UNDISPATCHED) { manager.installUpdate(ownedPath("installed.dmg")) }
+            val available = async(start = CoroutineStart.UNDISPATCHED) { manager.downloadUpdate(update("9.5.10")) }
+            val selected =
+                async(start = CoroutineStart.UNDISPATCHED) {
+                    manager.downloadSpecificVersion(
+                        VersionInfo(Version.parse("9.5.11")!!, "", 0, "", "", false, false),
+                    )
+                }
+            releaseInstall.complete(Unit)
+
+            assertTrue(installation.await())
+            assertIs<UpdateResult.Error>(available.await())
+            assertIs<UpdateResult.Error>(selected.await())
+            assertEquals(0, downloads)
+            assertEquals(UpdateState.RestartRequired, manager.updateState.value)
+        }
+
+    private fun ownedPath(name: String): String = File(settingsDir, name).absolutePath
 
     private fun update(version: String): UpdateInfo {
         val latest = Version.parse(version)!!
