@@ -38,6 +38,10 @@ class UpdateManager private constructor(
 
     private val logger = BossLogger.forComponent("UpdateManager")
 
+    // File ownership spans suspension: a second download must not overwrite the
+    // artifact while an installer is using it or removing a permanent refusal.
+    private val artifactMutex = Mutex()
+
     // Internal for access by VersionListManager
     internal val updateService = UpdateService()
 
@@ -293,6 +297,13 @@ class UpdateManager private constructor(
      * The version stays on offer, so the banner can download it again.
      */
     suspend fun discardDownload() {
+        val expected = _updateState.value as? UpdateState.ReadyToInstall ?: return
+        artifactMutex.withLock {
+            if (_updateState.value == expected) discardStagedDownload()
+        }
+    }
+
+    private suspend fun discardStagedDownload() {
         // CLAIM BEFORE DELETING, and give up if the claim is lost. The state move used to
         // happen AFTER the delete, which is exactly what let an install and a discard both
         // proceed - see [claimStagedUpdate]. Whoever moves the state out of ReadyToInstall owns
@@ -321,6 +332,9 @@ class UpdateManager private constructor(
      * Download the available update
      */
     suspend fun downloadUpdate(updateInfo: UpdateInfo): UpdateResult =
+        artifactMutex.withLock { downloadAvailableUpdate(updateInfo) }
+
+    private suspend fun downloadAvailableUpdate(updateInfo: UpdateInfo): UpdateResult =
         try {
             _updateState.value = UpdateState.Downloading(0f)
 
@@ -357,6 +371,9 @@ class UpdateManager private constructor(
      * Download a specific version (for upgrades or downgrades)
      */
     suspend fun downloadSpecificVersion(versionInfo: VersionInfo): UpdateResult =
+        artifactMutex.withLock { downloadSelectedVersion(versionInfo) }
+
+    private suspend fun downloadSelectedVersion(versionInfo: VersionInfo): UpdateResult =
         try {
             _updateState.value = UpdateState.Downloading(0f)
 
@@ -414,6 +431,13 @@ class UpdateManager private constructor(
      * Install the downloaded update
      */
     suspend fun installUpdate(downloadPath: String): Boolean {
+        val expected = _updateState.value as? UpdateState.ReadyToInstall ?: return false
+        return artifactMutex.withLock {
+            if (_updateState.value == expected) installStagedUpdate(downloadPath) else false
+        }
+    }
+
+    private suspend fun installStagedUpdate(downloadPath: String): Boolean {
         // Claim the staged artifact, or do nothing at all.
         //
         // Both halves of this matter, and the bug was that neither existed. The state moved to
@@ -446,7 +470,7 @@ class UpdateManager private constructor(
                     updateService.installUpdate(claimed.downloadPath)
                 }
             if (outcome.succeeded) {
-                _updateState.value = UpdateState.RestartRequired
+                _updateState.compareAndSet(UpdateState.Installing, UpdateState.RestartRequired)
             } else {
                 applyInstallFailure(outcome, claimed)
             }
@@ -454,7 +478,7 @@ class UpdateManager private constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            _updateState.value = UpdateState.Error("Installation failed: ${e.message}")
+            _updateState.compareAndSet(UpdateState.Installing, UpdateState.Error("Installation failed: ${e.message}"))
             false
         }
     }
@@ -468,30 +492,39 @@ class UpdateManager private constructor(
         outcome: InstallOutcome,
         staged: UpdateState.ReadyToInstall,
     ) {
-        val restagedSamePath = (_updateState.value as? UpdateState.ReadyToInstall)?.downloadPath == staged.downloadPath
-        _updateState.value = UpdateState.Error(outcome.errorMessage ?: "Installation failed")
+        val publishedFailure =
+            _updateState.compareAndSet(
+                UpdateState.Installing,
+                UpdateState.Error(outcome.errorMessage ?: "Installation failed"),
+            )
+        if (!publishedFailure) {
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Preserving a newer update state after an earlier installation failed",
+                mapOf("error" to (outcome.errorMessage ?: "Installation failed")),
+            )
+        }
         if (outcome.failureReason != InstallFailureReason.UnsupportedOs) return
         try {
-            // A refused downgrade must not erase the dismissal of a newer release.
-            if (staged.updateInfo?.isNewerVersionAvailable == true) {
+            val info = staged.updateInfo
+            val dismissed = UpdateSettings.lastDismissedVersion?.let(Version::parse)
+            // An intermediate release (newer than this app, older than the latest
+            // refusal) must not reopen automatic offers of that latest release.
+            if (info != null && info.isNewerVersionAvailable &&
+                (dismissed == null || !dismissed.isNewerThan(info.latestVersion))
+            ) {
                 logger.info(
                     LogCategory.SYSTEM,
                     "Suppressing update refused by this operating system",
-                    mapOf("version" to staged.updateInfo.latestVersion.toString()),
+                    mapOf("version" to info.latestVersion.toString()),
                 )
-                persistDismissedVersion(staged.updateInfo.latestVersion)
+                persistDismissedVersion(info.latestVersion)
             }
         } finally {
-            // Cleanup also runs for downgrades and canceled persistence. The service
-            // checks staging containment and removes only this claimed path.
-            try {
-                val currentPath = (_updateState.value as? UpdateState.ReadyToInstall)?.downloadPath
-                if (!restagedSamePath && currentPath != staged.downloadPath) {
-                    updateService.discardDownload(staged.downloadPath)
-                }
-            } catch (e: Exception) {
-                logger.warn(LogCategory.SYSTEM, "Could not remove unsupported update artifact", error = e)
-            }
+            // artifactMutex also excludes downloads during persistence/cleanup.
+            // If a state was replaced outside that protocol, keep its files intact.
+            // Cancellation can prevent durability; a later launch may offer again.
+            if (publishedFailure) updateService.discardDownload(staged.downloadPath)
         }
     }
 

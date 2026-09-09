@@ -1,7 +1,9 @@
 package ai.rever.boss.updater
 
 import ai.rever.boss.utils.Version
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
@@ -122,7 +124,6 @@ class UpdateManagerInstallOutcomeTest {
             val unrelated = File(staging, "unrelated-${System.nanoTime()}.dmg").apply { writeText("keep") }
             try {
                 val refusedInfo = update("9.5.9")
-                val newerInfo = update("9.5.10")
                 installOutcome =
                     InstallOutcome(
                         succeeded = false,
@@ -133,9 +134,6 @@ class UpdateManagerInstallOutcomeTest {
                 manager =
                     UpdateManager(
                         UpdateInstallOperation {
-                            // A later artifact can be staged while this operation is in flight;
-                            // cleanup must remain bound to the path this installation claimed.
-                            manager.stageDownloadedUpdate(newerInfo, newer.absolutePath)
                             installOutcome
                         },
                     )
@@ -162,6 +160,7 @@ class UpdateManagerInstallOutcomeTest {
             assertFalse(manager.installUpdate("old.dmg"))
 
             assertEquals("9.5.9", UpdateSettings.lastDismissedVersion)
+            assertEquals("new.dmg", assertIs<UpdateState.ReadyToInstall>(manager.updateState.value).downloadPath)
         }
 
     @Test
@@ -273,7 +272,70 @@ class UpdateManagerInstallOutcomeTest {
 
                 assertEquals("new", artifact.readText())
                 assertEquals("9.5.9", UpdateSettings.lastDismissedVersion)
+                val ready = assertIs<UpdateState.ReadyToInstall>(manager.updateState.value)
+                assertEquals(artifact.absolutePath, ready.downloadPath)
+                assertEquals("9.5.10", ready.updateInfo?.latestVersion.toString())
             } finally {
+                artifact.delete()
+            }
+        }
+
+    @Test
+    fun `refused intermediate release preserves suppression of the latest release`() =
+        runBlocking {
+            UpdateSettings.lastDismissedVersion = "9.5.11"
+            installOutcome = InstallOutcome(false, "Unsupported macOS", InstallFailureReason.UnsupportedOs)
+            manager.stageDownloadedUpdate(update("9.5.9"), File(settingsDir, "intermediate.dmg").absolutePath)
+
+            assertFalse(manager.installUpdate(File(settingsDir, "intermediate.dmg").absolutePath))
+
+            assertEquals("9.5.11", UpdateSettings.lastDismissedVersion)
+            assertEquals("Unsupported macOS", assertIs<UpdateState.Error>(manager.updateState.value).message)
+        }
+
+    @Test
+    fun `a download cannot replace an artifact until the refused installation releases it`() =
+        runBlocking {
+            val staging = createRestrictedDir(defaultStagingDir())
+            val artifact = File.createTempFile("refused-serialized-", ".dmg", staging).apply { writeText("old") }
+            val installing = CompletableDeferred<Unit>()
+            val releaseInstall = CompletableDeferred<Unit>()
+            var downloaded = false
+            manager.shutdown()
+            manager =
+                UpdateManager(
+                    UpdateInstallOperation {
+                        installing.complete(Unit)
+                        releaseInstall.await()
+                        InstallOutcome(false, "Unsupported macOS", InstallFailureReason.UnsupportedOs)
+                    },
+                    checkOperation = { update("9.5.10") },
+                    downloadOperation = { _, _ ->
+                        downloaded = true
+                        assertFalse(artifact.exists(), "refused file is cleaned before a new download can reuse its path")
+                        artifact.writeText("new")
+                        artifact.absolutePath
+                    },
+                )
+            try {
+                manager.stageDownloadedUpdate(update("9.5.9"), artifact.absolutePath)
+                val installation = async(start = CoroutineStart.UNDISPATCHED) { manager.installUpdate(artifact.absolutePath) }
+                installing.await()
+                val download = async(start = CoroutineStart.UNDISPATCHED) { manager.downloadUpdate(update("9.5.10")) }
+                assertFalse(downloaded)
+                assertEquals("old", artifact.readText())
+                // A discard pressed during install must not queue deletion of the next download.
+                manager.discardDownload()
+                releaseInstall.complete(Unit)
+
+                assertFalse(installation.await())
+                assertIs<UpdateResult.UpdateAvailable>(download.await())
+
+                assertEquals("new", artifact.readText())
+                assertEquals(artifact.absolutePath, assertIs<UpdateState.ReadyToInstall>(manager.updateState.value).downloadPath)
+                assertEquals("9.5.9", UpdateSettings.lastDismissedVersion)
+            } finally {
+                releaseInstall.complete(Unit)
                 artifact.delete()
             }
         }
