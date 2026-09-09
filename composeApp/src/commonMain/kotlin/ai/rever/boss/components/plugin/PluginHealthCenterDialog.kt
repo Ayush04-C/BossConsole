@@ -360,12 +360,3 @@ private fun PluginHealthStatus.label(): String =
         PluginHealthStatus.NEEDS_ATTENTION -> "Needs attention"
         PluginHealthStatus.UNAVAILABLE -> "Unavailable"
     }
-
-private fun sandboxIsDisabled(
-    manager: DynamicPluginManager,
-    pluginId: String,
-): Boolean =
-    manager.sandboxManager
-        .getSandbox(pluginId)
-        ?.state
-        ?.value == SandboxState.DISABLED
