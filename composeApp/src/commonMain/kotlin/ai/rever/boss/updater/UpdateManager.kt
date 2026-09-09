@@ -332,7 +332,9 @@ class UpdateManager private constructor(
      * Download the available update
      */
     suspend fun downloadUpdate(updateInfo: UpdateInfo): UpdateResult =
-        artifactMutex.withLock { downloadAvailableUpdate(updateInfo) }
+        artifactMutex.withLock {
+            downloadAvailableUpdate(updateInfo)
+        }
 
     private suspend fun downloadAvailableUpdate(updateInfo: UpdateInfo): UpdateResult =
         try {
