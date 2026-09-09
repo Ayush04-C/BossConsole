@@ -1953,7 +1953,9 @@ internal class SidecarBackfillCoordinator(
         }
     }
 
-    private fun isCurrentAndUnsigned(entry: PendingJar): Boolean = stampOf(entry.jarFile) == entry.stamp && !sidecarExists(entry.jarFile)
+    private fun isCurrentAndUnsigned(entry: PendingJar): Boolean {
+        return stampOf(entry.jarFile) == entry.stamp && !sidecarExists(entry.jarFile)
+    }
 
     private fun stampOf(jarFile: File): JarStamp? {
         if (!jarFile.exists()) return null
