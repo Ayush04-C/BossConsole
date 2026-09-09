@@ -150,10 +150,14 @@ class PluginHealthCenterTest {
     @Test
     fun `transitional and unloaded states are not healthy and cannot reload`() {
         for (state in PluginState.entries.filter { it != PluginState.LOADED && it != PluginState.DISABLED }) {
-            val row = pluginHealthRows(
-                mapOf("notes" to plugin("notes", "Notes", state)),
-                emptyMap(), emptySet(), emptySet(), emptySet(),
-            ).single()
+            val row =
+                pluginHealthRows(
+                    mapOf("notes" to plugin("notes", "Notes", state)),
+                    emptyMap(),
+                    emptySet(),
+                    emptySet(),
+                    emptySet(),
+                ).single()
             assertFalse(row.status == PluginHealthStatus.HEALTHY, state.name)
             assertNull(row.action, state.name)
         }
@@ -161,10 +165,14 @@ class PluginHealthCenterTest {
 
     @Test
     fun `an error during unloading cannot offer reload`() {
-        val row = pluginHealthRows(
-            mapOf("notes" to plugin("notes", "Notes", PluginState.UNLOADING, errorMessage = "error")),
-            emptyMap(), emptySet(), emptySet(), emptySet(),
-        ).single()
+        val row =
+            pluginHealthRows(
+                mapOf("notes" to plugin("notes", "Notes", PluginState.UNLOADING, errorMessage = "error")),
+                emptyMap(),
+                emptySet(),
+                emptySet(),
+                emptySet(),
+            ).single()
         assertNull(row.action)
     }
 

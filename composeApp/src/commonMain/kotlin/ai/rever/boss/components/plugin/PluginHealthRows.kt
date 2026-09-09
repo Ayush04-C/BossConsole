@@ -169,7 +169,10 @@ private fun attentionRow(
 )
 
 private fun reloadActionFor(info: DynamicPluginInfo): PluginHealthAction? =
-    if (info.state == PluginState.LOADED && !HotReloadPolicy.requiresRestartInsteadOfHotReload(info.manifest.pluginId)) {
+    if (
+        info.state == PluginState.LOADED &&
+        !HotReloadPolicy.requiresRestartInsteadOfHotReload(info.manifest.pluginId)
+    ) {
         PluginHealthAction.RELOAD
     } else {
         null

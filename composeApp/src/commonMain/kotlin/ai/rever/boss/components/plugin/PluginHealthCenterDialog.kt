@@ -64,7 +64,8 @@ internal class PluginHealthOperationState {
 }
 
 @Composable
-internal fun rememberPluginHealthOperationState(): PluginHealthOperationState = remember { PluginHealthOperationState() }
+internal fun rememberPluginHealthOperationState(): PluginHealthOperationState =
+    remember { PluginHealthOperationState() }
 
 /** Host-owned operational surface for plugin status and existing safe recovery actions. */
 @Composable
@@ -100,8 +101,7 @@ internal fun PluginHealthCenterDialog(
                 if (operation.workingPluginId == null) {
                     operation.workingPluginId = row.pluginId
                     operation.actionError = null
-                    launchHealthAction(
-                        scope = scope,
+                    scope.launchHealthAction(
                         manager = manager,
                         delegate = delegate,
                         row = row,
@@ -192,23 +192,23 @@ private fun PluginHealthRows(
     }
 }
 
-private fun launchHealthAction(
-    scope: kotlinx.coroutines.CoroutineScope,
+private fun kotlinx.coroutines.CoroutineScope.launchHealthAction(
     manager: DynamicPluginManager,
     delegate: PluginLoaderDelegate?,
     row: PluginHealthRow,
     action: PluginHealthAction,
     onFinished: (String?) -> Unit,
 ) {
-    scope.launch {
+    launch {
         val result =
             runCatching {
                 if (currentHealthAction(manager, row.pluginId) == action) {
                     // The delegate persists Enable and coordinates reload teardown and refresh.
-                    val succeeded = when (action) {
-                        PluginHealthAction.ENABLE -> delegate?.enablePlugin(row.pluginId) == true
-                        PluginHealthAction.RELOAD -> delegate?.reloadPlugin(row.pluginId) != null
-                    }
+                    val succeeded =
+                        when (action) {
+                            PluginHealthAction.ENABLE -> delegate?.enablePlugin(row.pluginId) == true
+                            PluginHealthAction.RELOAD -> delegate?.reloadPlugin(row.pluginId) != null
+                        }
                     if (succeeded) Result.success(Unit) else Result.failure(IllegalStateException("Recovery failed"))
                 } else {
                     Result.failure(IllegalStateException("Plugin health changed"))
