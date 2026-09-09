@@ -312,14 +312,18 @@ class UpdateManagerInstallOutcomeTest {
                     checkOperation = { update("9.5.10") },
                     downloadOperation = { _, _ ->
                         downloaded = true
-                        assertFalse(artifact.exists(), "refused file is cleaned before a new download can reuse its path")
+                        assertFalse(
+                            artifact.exists(),
+                            "refused file is cleaned before a new download can reuse its path",
+                        )
                         artifact.writeText("new")
                         artifact.absolutePath
                     },
                 )
             try {
                 manager.stageDownloadedUpdate(update("9.5.9"), artifact.absolutePath)
-                val installation = async(start = CoroutineStart.UNDISPATCHED) { manager.installUpdate(artifact.absolutePath) }
+                val installation =
+                    async(start = CoroutineStart.UNDISPATCHED) { manager.installUpdate(artifact.absolutePath) }
                 installing.await()
                 val download = async(start = CoroutineStart.UNDISPATCHED) { manager.downloadUpdate(update("9.5.10")) }
                 assertFalse(downloaded)
@@ -332,7 +336,10 @@ class UpdateManagerInstallOutcomeTest {
                 assertIs<UpdateResult.UpdateAvailable>(download.await())
 
                 assertEquals("new", artifact.readText())
-                assertEquals(artifact.absolutePath, assertIs<UpdateState.ReadyToInstall>(manager.updateState.value).downloadPath)
+                assertEquals(
+                    artifact.absolutePath,
+                    assertIs<UpdateState.ReadyToInstall>(manager.updateState.value).downloadPath,
+                )
                 assertEquals("9.5.9", UpdateSettings.lastDismissedVersion)
             } finally {
                 releaseInstall.complete(Unit)
