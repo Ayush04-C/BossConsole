@@ -17,7 +17,7 @@ class PluginHealthOperationStateTest {
         val revision = mutableStateOf(0)
         lateinit var current: PluginHealthOperationState
         rule.setContent {
-            current = rememberPluginHealthOperationState()
+            current = rememberHealthOperation()
             Text("Revision ${revision.value}, busy ${current.workingPluginId}, error ${current.actionError}")
         }
         rule.waitForIdle()

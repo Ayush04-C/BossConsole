@@ -177,3 +177,16 @@ private fun reloadActionFor(info: DynamicPluginInfo): PluginHealthAction? =
     } else {
         null
     }
+
+/** Watchdog disables stop the sandbox without changing the manager's loaded entry. */
+internal fun healthStatesWithSandboxDisables(
+    states: Map<String, DynamicPluginInfo>,
+    disabledPluginIds: Set<String>,
+): Map<String, DynamicPluginInfo> =
+    states.mapValues { (id, info) ->
+        if (id in disabledPluginIds && info.state == PluginState.LOADED) {
+            info.copy(state = PluginState.DISABLED, enabled = false)
+        } else {
+            info
+        }
+    }

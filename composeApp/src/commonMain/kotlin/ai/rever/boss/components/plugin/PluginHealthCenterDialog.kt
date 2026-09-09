@@ -1,6 +1,9 @@
 package ai.rever.boss.components.plugin
 
 import ai.rever.boss.plugin.api.PluginLoaderDelegate
+import ai.rever.boss.plugin.logging.BossLogger
+import ai.rever.boss.plugin.logging.LogCategory
+import ai.rever.boss.plugin.sandbox.SandboxState
 import ai.rever.boss.plugin.sandbox.ui.PluginCrashRegistry
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
@@ -24,6 +27,7 @@ import androidx.compose.material.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -35,7 +39,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+
+private val healthLogger = BossLogger.forComponent("PluginHealthCenter")
 
 /** A lifecycle status presented by the host without duplicating plugin state. */
 internal enum class PluginHealthStatus {
@@ -64,8 +71,7 @@ internal class PluginHealthOperationState {
 }
 
 @Composable
-internal fun rememberPluginHealthOperationState(): PluginHealthOperationState =
-    remember { PluginHealthOperationState() }
+internal fun rememberHealthOperation(): PluginHealthOperationState = remember { PluginHealthOperationState() }
 
 /** Host-owned operational surface for plugin status and existing safe recovery actions. */
 @Composable
@@ -74,14 +80,18 @@ internal fun PluginHealthCenterDialog(
     delegate: PluginLoaderDelegate?,
     onDismiss: () -> Unit,
 ) {
-    val pluginStates by (manager?.pluginStates ?: return).collectAsState()
-    val gates by PluginLoadGateRegistry.gates.collectAsState()
-    val crashedPluginIds = PluginCrashRegistry.crashedPlugins.keys
-    val inaccessible = manager.getInaccessiblePlugins().mapTo(mutableSetOf()) { it.pluginId }
-    val incompatible = pluginStates.keys.filterTo(mutableSetOf()) { PluginCrashRegistry.isIncompatible(it) }
-    val rows = pluginHealthRows(pluginStates, gates, crashedPluginIds, inaccessible, incompatible)
+    if (manager == null) {
+        BossDialog(onDismissRequest = onDismiss) {
+            Column(Modifier.padding(20.dp)) {
+                Text("Plugin management is not available in this window yet.")
+                TextButton(onClick = onDismiss) { Text("Close") }
+            }
+        }
+        return
+    }
+    val rows = observeHealthRows(manager)
     val scope = rememberCoroutineScope()
-    val operation = rememberPluginHealthOperationState()
+    val operation = rememberHealthOperation()
 
     BossDialog(
         onDismissRequest = { if (operation.workingPluginId == null) onDismiss() },
@@ -115,6 +125,33 @@ internal fun PluginHealthCenterDialog(
             },
         )
     }
+}
+
+@Composable
+private fun observeHealthRows(manager: DynamicPluginManager): List<PluginHealthRow> {
+    val pluginStates by manager.pluginStates.collectAsState()
+    val gates by PluginLoadGateRegistry.gates.collectAsState()
+    val crashedPluginIds = PluginCrashRegistry.crashedPlugins.keys
+    val inaccessible = manager.getInaccessiblePlugins().mapTo(mutableSetOf()) { it.pluginId }
+    val incompatible =
+        (pluginStates.keys + crashedPluginIds).filterTo(mutableSetOf()) { PluginCrashRegistry.isIncompatible(it) }
+    val sandboxDisabled =
+        pluginStates.keys.filterTo(mutableSetOf()) { id ->
+            key(id) {
+                manager.sandboxManager
+                    .getSandbox(id)
+                    ?.state
+                    ?.collectAsState()
+                    ?.value == SandboxState.DISABLED
+            }
+        }
+    return pluginHealthRows(
+        healthStatesWithSandboxDisables(pluginStates, sandboxDisabled),
+        gates,
+        crashedPluginIds,
+        inaccessible,
+        incompatible,
+    )
 }
 
 @Composable
@@ -155,7 +192,7 @@ private fun PluginHealthHeader(actionError: String?) {
     )
     Spacer(Modifier.height(6.dp))
     Text(
-        text = "Current plugin lifecycle state. Recovery actions use the existing host flows.",
+        text = "See why a plugin is unavailable and recover it when possible.",
         color = BossTheme.colors.textSecondary,
         fontSize = 13.sp,
     )
@@ -186,6 +223,7 @@ private fun PluginHealthRows(
             PluginHealthRowCard(
                 row = row,
                 working = workingPluginId == row.pluginId,
+                actionsEnabled = workingPluginId == null,
                 onAction = { action -> onAction(row, action) },
             )
         }
@@ -200,24 +238,44 @@ private fun kotlinx.coroutines.CoroutineScope.launchHealthAction(
     onFinished: (String?) -> Unit,
 ) {
     launch {
-        val result =
-            runCatching {
-                if (currentHealthAction(manager, row.pluginId) == action) {
-                    // The delegate persists Enable and coordinates reload teardown and refresh.
-                    val succeeded =
-                        when (action) {
-                            PluginHealthAction.ENABLE -> delegate?.enablePlugin(row.pluginId) == true
-                            PluginHealthAction.RELOAD -> delegate?.reloadPlugin(row.pluginId) != null
-                        }
-                    if (succeeded) Result.success(Unit) else Result.failure(IllegalStateException("Recovery failed"))
-                } else {
-                    Result.failure(IllegalStateException("Plugin health changed"))
-                }
-            }.getOrElse { Result.failure(it) }
-        val verb = if (action == PluginHealthAction.ENABLE) "enable" else "reload"
-        onFinished(
-            if (result.isFailure) "Could not $verb this plugin. Check BOSS logs for details." else null,
+        healthLogger.info(
+            LogCategory.SYSTEM,
+            "Plugin health recovery requested",
+            mapOf("pluginId" to row.pluginId, "action" to action.name),
         )
+        if (currentHealthAction(manager, row.pluginId) != action) {
+            healthLogger.info(
+                LogCategory.SYSTEM,
+                "Plugin health changed before recovery",
+                mapOf("pluginId" to row.pluginId),
+            )
+            onFinished("Plugin state changed. Review its current status and try again.")
+            return@launch
+        }
+        if (delegate == null) {
+            healthLogger.warn(LogCategory.SYSTEM, "Plugin health recovery delegate unavailable")
+            onFinished("Plugin recovery is not available in this window yet.")
+            return@launch
+        }
+        val succeeded =
+            runCatching {
+                // The delegate persists Enable and coordinates reload teardown and refresh.
+                // Reload's uninstall already clears the old crash and quarantine markers.
+                when (action) {
+                    PluginHealthAction.ENABLE -> delegate.enablePlugin(row.pluginId)
+                    PluginHealthAction.RELOAD -> delegate.reloadPlugin(row.pluginId) != null
+                }
+            }.getOrElse {
+                if (it is CancellationException) throw it
+                healthLogger.warn(
+                    LogCategory.SYSTEM,
+                    "Plugin health recovery failed",
+                    mapOf("pluginId" to row.pluginId, "errorType" to it.javaClass.simpleName),
+                )
+                false
+            }
+        val verb = if (action == PluginHealthAction.ENABLE) "enable" else "reload"
+        onFinished(if (succeeded) null else "Could not $verb this plugin. Check BOSS logs for details.")
     }
 }
 
@@ -228,7 +286,11 @@ private fun currentHealthAction(
 ): PluginHealthAction? {
     val states = manager.pluginStates.value
     return pluginHealthRows(
-        pluginStates = states,
+        pluginStates =
+            healthStatesWithSandboxDisables(
+                states,
+                states.keys.filterTo(mutableSetOf()) { sandboxIsDisabled(manager, it) },
+            ),
         loadGates = PluginLoadGateRegistry.gates.value,
         crashedPluginIds = states.keys.filterTo(mutableSetOf()) { PluginCrashRegistry.hasCrashed(it) },
         inaccessiblePluginIds = manager.getInaccessiblePlugins().mapTo(mutableSetOf()) { it.pluginId },
@@ -240,6 +302,7 @@ private fun currentHealthAction(
 private fun PluginHealthRowCard(
     row: PluginHealthRow,
     working: Boolean,
+    actionsEnabled: Boolean,
     onAction: (PluginHealthAction) -> Unit,
 ) {
     Card(backgroundColor = BossTheme.colors.raised, elevation = 0.dp) {
@@ -272,7 +335,7 @@ private fun PluginHealthRowCard(
                 Spacer(Modifier.width(12.dp))
                 Button(
                     onClick = { onAction(action) },
-                    enabled = !working,
+                    enabled = actionsEnabled,
                     colors = ButtonDefaults.buttonColors(backgroundColor = BossTheme.colors.signal),
                 ) {
                     if (working) {
@@ -295,3 +358,12 @@ private fun PluginHealthStatus.label(): String =
         PluginHealthStatus.NEEDS_ATTENTION -> "Needs attention"
         PluginHealthStatus.UNAVAILABLE -> "Unavailable"
     }
+
+private fun sandboxIsDisabled(
+    manager: DynamicPluginManager,
+    pluginId: String,
+): Boolean =
+    manager.sandboxManager
+        .getSandbox(pluginId)
+        ?.state
+        ?.value == SandboxState.DISABLED

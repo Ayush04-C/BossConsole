@@ -184,6 +184,22 @@ class PluginHealthCenterTest {
         assertNull(row.action)
     }
 
+    @Test
+    fun `watchdog disabled sandbox is not reported as healthy by its loaded manager entry`() {
+        val states = mapOf("notes" to plugin("notes", "Notes", PluginState.LOADED))
+        val row =
+            pluginHealthRows(
+                healthStatesWithSandboxDisables(states, setOf("notes")),
+                emptyMap(),
+                emptySet(),
+                emptySet(),
+                emptySet(),
+            ).single()
+        assertEquals(PluginHealthStatus.UNAVAILABLE, row.status)
+        assertEquals(PluginHealthAction.ENABLE, row.action)
+        assertEquals(states, healthStatesWithSandboxDisables(states, emptySet()))
+    }
+
     private fun plugin(
         id: String,
         name: String,
