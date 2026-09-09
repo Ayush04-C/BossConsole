@@ -6,7 +6,10 @@ import kotlin.test.assertEquals
 class HostnameSanitizerTest {
     @Test
     fun `sentence final private hosts are redacted without consuming punctuation`() {
-        assertEquals("Could not reach [HOST].", LogSanitizer.sanitizeExceptionMessage("Could not reach Proxy.Corp.Internal."))
+        assertEquals(
+            "Could not reach [HOST].",
+            LogSanitizer.sanitizeExceptionMessage("Could not reach Proxy.Corp.Internal."),
+        )
         assertEquals("[HOST]", LogSanitizer.sanitizeExceptionMessage("Status.INTERNAL"))
     }
 
