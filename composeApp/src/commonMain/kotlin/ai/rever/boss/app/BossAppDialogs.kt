@@ -27,6 +27,7 @@ import ai.rever.boss.components.plugin.MissingHandlerPluginDialog
 import ai.rever.boss.components.plugin.MissingHandlerPluginEventBus
 import ai.rever.boss.components.plugin.PanelIds
 import ai.rever.boss.components.plugin.PluginDependencyEventBus
+import ai.rever.boss.components.plugin.PluginHealthCenterDialog
 import ai.rever.boss.components.plugin.PluginLoadGateHost
 import ai.rever.boss.components.plugin.PluginLoadRemedyAccess
 import ai.rever.boss.components.plugin.PluginStoreVersionBridge
@@ -459,6 +460,13 @@ internal fun BossAppDialogs(state: BossAppState) {
         // In the MAIN composition, not inside whichever chrome raised it - see BossAppState.
         state.draggablePanelComponent.ToolLauncherDialog(
             onDismiss = { state.showToolLauncherDialog = false },
+        )
+    }
+
+    if (state.showPluginHealthCenter) {
+        PluginHealthCenterDialog(
+            manager = state.currentDefaultPlugin?.dynamicPluginManager,
+            onDismiss = { state.showPluginHealthCenter = false },
         )
     }
 
