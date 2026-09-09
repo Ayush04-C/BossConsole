@@ -24,6 +24,7 @@ import kotlin.time.Duration
 class UpdateManager private constructor(
     private val installOperation: (suspend (String) -> InstallOutcome)?,
     private val checkOperation: (suspend () -> UpdateInfo)?,
+    private val downloadOperation: (suspend (UpdateInfo, (Float) -> Unit) -> String?)? = null,
 ) {
     constructor() : this(null, null)
 
@@ -32,7 +33,8 @@ class UpdateManager private constructor(
     internal constructor(
         installOperation: UpdateInstallOperation,
         checkOperation: suspend () -> UpdateInfo,
-    ) : this(installOperation::install, checkOperation)
+        downloadOperation: (suspend (UpdateInfo, (Float) -> Unit) -> String?)? = null,
+    ) : this(installOperation::install, checkOperation, downloadOperation)
 
     private val logger = BossLogger.forComponent("UpdateManager")
 
@@ -322,9 +324,12 @@ class UpdateManager private constructor(
         try {
             _updateState.value = UpdateState.Downloading(0f)
 
+            val onProgress: (Float) -> Unit = { progress -> _updateState.value = UpdateState.Downloading(progress) }
             val downloadPath =
-                updateService.downloadUpdate(updateInfo) { progress ->
-                    _updateState.value = UpdateState.Downloading(progress)
+                if (downloadOperation != null) {
+                    downloadOperation.invoke(updateInfo, onProgress)
+                } else {
+                    updateService.downloadUpdate(updateInfo, onProgress)
                 }
 
             if (downloadPath != null) {
@@ -374,9 +379,12 @@ class UpdateManager private constructor(
             // downgrading to 9.4.20 showed a row reading "BOSS v9.4.34".
             _updateInfo.value = updateInfo
 
+            val onProgress: (Float) -> Unit = { progress -> _updateState.value = UpdateState.Downloading(progress) }
             val downloadPath =
-                updateService.downloadUpdate(updateInfo) { progress ->
-                    _updateState.value = UpdateState.Downloading(progress)
+                if (downloadOperation != null) {
+                    downloadOperation.invoke(updateInfo, onProgress)
+                } else {
+                    updateService.downloadUpdate(updateInfo, onProgress)
                 }
 
             if (downloadPath != null) {
@@ -419,7 +427,7 @@ class UpdateManager private constructor(
         // whichever lands first wins, and the loser returns without touching the file. It also
         // makes a second press of Install a no-op rather than a second elevated installer, which
         // the download center's dialog already got for free by clearing its action on use.
-        val claimed = _updateState.claimStagedUpdate { UpdateState.Installing }
+        val claimed = _updateState.claimStagedUpdate(downloadPath) { UpdateState.Installing }
         if (claimed == null) {
             logger.info(
                 LogCategory.SYSTEM,
@@ -460,23 +468,30 @@ class UpdateManager private constructor(
         outcome: InstallOutcome,
         staged: UpdateState.ReadyToInstall,
     ) {
+        val restagedSamePath = (_updateState.value as? UpdateState.ReadyToInstall)?.downloadPath == staged.downloadPath
         _updateState.value = UpdateState.Error(outcome.errorMessage ?: "Installation failed")
-        if (
-            outcome.failureReason == InstallFailureReason.UnsupportedOs &&
-            staged.updateInfo?.isNewerVersionAvailable == true
-        ) {
-            logger.info(
-                LogCategory.SYSTEM,
-                "Suppressing update refused by this operating system",
-                mapOf("version" to staged.updateInfo.latestVersion.toString()),
-            )
-            persistDismissedVersion(staged.updateInfo.latestVersion)
+        if (outcome.failureReason == InstallFailureReason.UnsupportedOs) {
             try {
-                // The claimed path is the one this refusal owns. Never consult
-                // mutable current state, which may already name a later download.
-                updateService.discardDownload(staged.downloadPath)
-            } catch (e: Exception) {
-                logger.warn(LogCategory.SYSTEM, "Could not remove unsupported update artifact", error = e)
+                // A refused downgrade must not erase the dismissal of a newer release.
+                if (staged.updateInfo?.isNewerVersionAvailable == true) {
+                    logger.info(
+                        LogCategory.SYSTEM,
+                        "Suppressing update refused by this operating system",
+                        mapOf("version" to staged.updateInfo.latestVersion.toString()),
+                    )
+                    persistDismissedVersion(staged.updateInfo.latestVersion)
+                }
+            } finally {
+                // Cleanup also runs for downgrades and canceled persistence. The service
+                // checks staging containment and removes only this claimed path.
+                try {
+                    val currentPath = (_updateState.value as? UpdateState.ReadyToInstall)?.downloadPath
+                    if (!restagedSamePath && currentPath != staged.downloadPath) {
+                        updateService.discardDownload(staged.downloadPath)
+                    }
+                } catch (e: Exception) {
+                    logger.warn(LogCategory.SYSTEM, "Could not remove unsupported update artifact", error = e)
+                }
             }
         }
     }
@@ -593,8 +608,10 @@ sealed class UpdateState {
  * read state the loser has no business acting on.
  */
 internal fun MutableStateFlow<UpdateState>.claimStagedUpdate(
+    expectedDownloadPath: String? = null,
     to: (UpdateState.ReadyToInstall) -> UpdateState,
 ): UpdateState.ReadyToInstall? {
     val ready = value as? UpdateState.ReadyToInstall ?: return null
-    return if (compareAndSet(ready, to(ready))) ready else null
+    val matchesPath = expectedDownloadPath == null || ready.downloadPath == expectedDownloadPath
+    return if (matchesPath && compareAndSet(ready, to(ready))) ready else null
 }

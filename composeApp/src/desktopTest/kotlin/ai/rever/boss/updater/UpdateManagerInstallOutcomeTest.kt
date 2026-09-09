@@ -1,6 +1,8 @@
 package ai.rever.boss.updater
 
 import ai.rever.boss.utils.Version
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import kotlin.io.path.createTempDirectory
@@ -10,7 +12,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
-import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -20,6 +21,7 @@ class UpdateManagerInstallOutcomeTest {
     private var dismissedBefore: String? = null
     private var installOutcome = InstallOutcome(succeeded = false)
     private var installedPath: String? = null
+    private var duringInstall: () -> Unit = {}
 
     @BeforeTest
     fun setUp() {
@@ -31,6 +33,7 @@ class UpdateManagerInstallOutcomeTest {
             UpdateManager(
                 UpdateInstallOperation { downloadPath ->
                     installedPath = downloadPath
+                    duringInstall()
                     installOutcome
                 },
             )
@@ -49,7 +52,7 @@ class UpdateManagerInstallOutcomeTest {
         runBlocking {
             val update = update("9.5.9")
             val message = "This update requires macOS 13.0 or later"
-            val downloadPath = "C:/updates/BOSS-9.5.9.dmg"
+            val downloadPath = "/updates/BOSS-9.5.9.dmg"
             installOutcome =
                 InstallOutcome(
                     succeeded = false,
@@ -65,14 +68,13 @@ class UpdateManagerInstallOutcomeTest {
             assertTrue(File(settingsDir, "update-settings.json").readText().contains("9.5.9"))
             val state = assertIs<UpdateState.Error>(manager.updateState.value)
             assertEquals(message, state.message)
-            assertNotEquals("9.5.10", UpdateSettings.lastDismissedVersion)
         }
 
     @Test
     fun `generic install failure remains visible without dismissing the version`() =
         runBlocking {
             val update = update("9.5.9")
-            val downloadPath = "C:/updates/BOSS-9.5.9.dmg"
+            val downloadPath = "/updates/BOSS-9.5.9.dmg"
             installOutcome = InstallOutcome(succeeded = false, errorMessage = "Could not mount update")
             manager.stageDownloadedUpdate(update, downloadPath)
 
@@ -147,6 +149,132 @@ class UpdateManagerInstallOutcomeTest {
                 refused.delete()
                 newer.delete()
                 unrelated.delete()
+            }
+        }
+
+    @Test
+    fun `refusal remembers the claimed version even when another download finishes`() =
+        runBlocking {
+            installOutcome = InstallOutcome(false, "Unsupported macOS", InstallFailureReason.UnsupportedOs)
+            manager.stageDownloadedUpdate(update("9.5.9"), "old.dmg")
+            duringInstall = { manager.stageDownloadedUpdate(update("9.5.10"), "new.dmg") }
+
+            assertFalse(manager.installUpdate("old.dmg"))
+
+            assertEquals("9.5.9", UpdateSettings.lastDismissedVersion)
+        }
+
+    @Test
+    fun `stale install action cannot claim a different staged artifact`() =
+        runBlocking {
+            manager.stageDownloadedUpdate(update("9.5.10"), "new.dmg")
+
+            assertFalse(manager.installUpdate("old.dmg"))
+
+            assertNull(installedPath)
+            assertNull(UpdateSettings.lastDismissedVersion)
+            assertEquals("new.dmg", assertIs<UpdateState.ReadyToInstall>(manager.updateState.value).downloadPath)
+        }
+
+    @Test
+    fun `refused downgrade preserves the newer release dismissal`() =
+        runBlocking {
+            UpdateSettings.lastDismissedVersion = "9.5.9"
+            installOutcome = InstallOutcome(false, "Unsupported macOS", InstallFailureReason.UnsupportedOs)
+            manager.stageDownloadedUpdate(update("9.5.7"), "downgrade.dmg")
+
+            assertFalse(manager.installUpdate("downgrade.dmg"))
+
+            assertEquals("9.5.9", UpdateSettings.lastDismissedVersion)
+            assertEquals("Unsupported macOS", assertIs<UpdateState.Error>(manager.updateState.value).message)
+        }
+
+    @Test
+    fun `cancellation during persistence keeps the installer refusal visible`() =
+        runBlocking {
+            installOutcome = InstallOutcome(false, "Unsupported macOS", InstallFailureReason.UnsupportedOs)
+            manager.stageDownloadedUpdate(update("9.5.9"), "update.dmg")
+            val installJob = launch(start = CoroutineStart.LAZY) { manager.installUpdate("update.dmg") }
+            duringInstall = { installJob.cancel() }
+
+            installJob.start()
+            installJob.join()
+
+            assertTrue(installJob.isCancelled)
+            assertEquals("Unsupported macOS", assertIs<UpdateState.Error>(manager.updateState.value).message)
+        }
+
+    @Test
+    fun `cleanup failure preserves the OS refusal and does not remove a directory tree`() =
+        runBlocking {
+            val staging = createRestrictedDir(defaultStagingDir())
+            val artifact = createTempDirectory(staging.toPath(), "refused-directory-").toFile()
+            val child = File(artifact, "keep.txt").apply { writeText("keep") }
+            try {
+                installOutcome = InstallOutcome(false, "Unsupported macOS", InstallFailureReason.UnsupportedOs)
+                manager.stageDownloadedUpdate(update("9.5.9"), artifact.absolutePath)
+
+                assertFalse(manager.installUpdate(artifact.absolutePath))
+
+                assertTrue(child.exists())
+                assertEquals("Unsupported macOS", assertIs<UpdateState.Error>(manager.updateState.value).message)
+                assertEquals("9.5.9", UpdateSettings.lastDismissedVersion)
+            } finally {
+                artifact.deleteRecursively()
+            }
+        }
+
+    @Test
+    fun `refused artifact outside staging remains untouched`() =
+        runBlocking {
+            val unrelated = File(settingsDir, "unrelated.dmg").apply { writeText("keep") }
+            installOutcome = InstallOutcome(false, "Unsupported macOS", InstallFailureReason.UnsupportedOs)
+            manager.stageDownloadedUpdate(update("9.5.9"), unrelated.absolutePath)
+
+            assertFalse(manager.installUpdate(unrelated.absolutePath))
+
+            assertEquals("keep", unrelated.readText())
+            assertEquals("Unsupported macOS", assertIs<UpdateState.Error>(manager.updateState.value).message)
+        }
+
+    @Test
+    fun `refused downgrade artifact is cleaned without replacing a newer dismissal`() =
+        runBlocking {
+            val staging = createRestrictedDir(defaultStagingDir())
+            val artifact = File.createTempFile("refused-downgrade-", ".dmg", staging).apply { writeText("refused") }
+            try {
+                UpdateSettings.lastDismissedVersion = "9.5.9"
+                installOutcome = InstallOutcome(false, "Unsupported macOS", InstallFailureReason.UnsupportedOs)
+                manager.stageDownloadedUpdate(update("9.5.7"), artifact.absolutePath)
+
+                assertFalse(manager.installUpdate(artifact.absolutePath))
+
+                assertFalse(artifact.exists())
+                assertEquals("9.5.9", UpdateSettings.lastDismissedVersion)
+            } finally {
+                artifact.delete()
+            }
+        }
+
+    @Test
+    fun `cleanup cannot delete a newly staged artifact that reused the refused path`() =
+        runBlocking {
+            val staging = createRestrictedDir(defaultStagingDir())
+            val artifact = File.createTempFile("refused-reused-", ".dmg", staging).apply { writeText("old") }
+            try {
+                installOutcome = InstallOutcome(false, "Unsupported macOS", InstallFailureReason.UnsupportedOs)
+                manager.stageDownloadedUpdate(update("9.5.9"), artifact.absolutePath)
+                duringInstall = {
+                    artifact.writeText("new")
+                    manager.stageDownloadedUpdate(update("9.5.10"), artifact.absolutePath)
+                }
+
+                assertFalse(manager.installUpdate(artifact.absolutePath))
+
+                assertEquals("new", artifact.readText())
+                assertEquals("9.5.9", UpdateSettings.lastDismissedVersion)
+            } finally {
+                artifact.delete()
             }
         }
 
