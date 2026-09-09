@@ -470,28 +470,27 @@ class UpdateManager private constructor(
     ) {
         val restagedSamePath = (_updateState.value as? UpdateState.ReadyToInstall)?.downloadPath == staged.downloadPath
         _updateState.value = UpdateState.Error(outcome.errorMessage ?: "Installation failed")
-        if (outcome.failureReason == InstallFailureReason.UnsupportedOs) {
+        if (outcome.failureReason != InstallFailureReason.UnsupportedOs) return
+        try {
+            // A refused downgrade must not erase the dismissal of a newer release.
+            if (staged.updateInfo?.isNewerVersionAvailable == true) {
+                logger.info(
+                    LogCategory.SYSTEM,
+                    "Suppressing update refused by this operating system",
+                    mapOf("version" to staged.updateInfo.latestVersion.toString()),
+                )
+                persistDismissedVersion(staged.updateInfo.latestVersion)
+            }
+        } finally {
+            // Cleanup also runs for downgrades and canceled persistence. The service
+            // checks staging containment and removes only this claimed path.
             try {
-                // A refused downgrade must not erase the dismissal of a newer release.
-                if (staged.updateInfo?.isNewerVersionAvailable == true) {
-                    logger.info(
-                        LogCategory.SYSTEM,
-                        "Suppressing update refused by this operating system",
-                        mapOf("version" to staged.updateInfo.latestVersion.toString()),
-                    )
-                    persistDismissedVersion(staged.updateInfo.latestVersion)
+                val currentPath = (_updateState.value as? UpdateState.ReadyToInstall)?.downloadPath
+                if (!restagedSamePath && currentPath != staged.downloadPath) {
+                    updateService.discardDownload(staged.downloadPath)
                 }
-            } finally {
-                // Cleanup also runs for downgrades and canceled persistence. The service
-                // checks staging containment and removes only this claimed path.
-                try {
-                    val currentPath = (_updateState.value as? UpdateState.ReadyToInstall)?.downloadPath
-                    if (!restagedSamePath && currentPath != staged.downloadPath) {
-                        updateService.discardDownload(staged.downloadPath)
-                    }
-                } catch (e: Exception) {
-                    logger.warn(LogCategory.SYSTEM, "Could not remove unsupported update artifact", error = e)
-                }
+            } catch (e: Exception) {
+                logger.warn(LogCategory.SYSTEM, "Could not remove unsupported update artifact", error = e)
             }
         }
     }
