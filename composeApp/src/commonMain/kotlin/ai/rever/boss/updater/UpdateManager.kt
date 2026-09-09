@@ -507,12 +507,10 @@ class UpdateManager private constructor(
         if (outcome.failureReason != InstallFailureReason.UnsupportedOs) return
         try {
             val info = staged.updateInfo
-            val dismissed = UpdateSettings.lastDismissedVersion?.let(Version::parse)
+            val dismissed = UpdateSettings.lastDismissedVersion?.let { Version.parse(it) }
             // An intermediate release (newer than this app, older than the latest
             // refusal) must not reopen automatic offers of that latest release.
-            if (info != null && info.isNewerVersionAvailable &&
-                (dismissed == null || !dismissed.isNewerThan(info.latestVersion))
-            ) {
+            if (info?.isNewerVersionAvailable == true && dismissed?.isNewerThan(info.latestVersion) != true) {
                 logger.info(
                     LogCategory.SYSTEM,
                     "Suppressing update refused by this operating system",
