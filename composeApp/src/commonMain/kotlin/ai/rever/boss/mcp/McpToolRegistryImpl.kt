@@ -102,6 +102,11 @@ object McpToolRegistryImpl : McpToolRegistry {
             onFault = { StatusMessageManager.showMessage(it.message, durationMs = FAULT_MESSAGE_MS) },
         )
 
+    /** Host-only local activity metadata; never exposed through the plugin API. */
+    internal val activityEvents: StateFlow<List<McpActivityEvent>> get() = core.activityEvents
+
+    internal fun clearActivity() = core.clearActivity()
+
     override val allTools: StateFlow<List<RegisteredMcpTool>> get() = core.allTools
     override val disabledToolNames: StateFlow<Set<String>> get() = core.disabledToolNames
     override val tools: StateFlow<List<RegisteredMcpTool>> get() = core.tools
@@ -272,6 +277,9 @@ internal class McpToolRegistryCore(
     private val disabledFile: File?,
     private val invokeTimeoutMs: Long = 60_000L,
     private val onFault: (McpKillSwitchFault) -> Unit = {},
+    private val activityStore: McpActivityStore = McpActivityStore(),
+    private val wallClockMs: () -> Long = System::currentTimeMillis,
+    private val monotonicNowNs: () -> Long = System::nanoTime,
 ) {
     private val logger = BossLogger.forComponent("McpToolRegistry")
 
@@ -305,6 +313,9 @@ internal class McpToolRegistryCore(
      * truth to keep on screen. See [McpKillSwitchFault].
      */
     val fault: StateFlow<McpKillSwitchFault?> = _fault.asStateFlow()
+    val activityEvents: StateFlow<List<McpActivityEvent>> = activityStore.events
+
+    fun clearActivity() = activityStore.clear()
 
     /**
      * Set when [loadDisabled] found a file it could not parse. While it is up,
@@ -635,10 +646,15 @@ internal class McpToolRegistryCore(
         val tool =
             _tools.value.firstOrNull { it.definition.name == toolName }
                 ?: return McpToolResult("Unknown or disabled MCP tool: $toolName", isError = true)
-        val args = parseArgs(arguments)
+        val startedAtNs = monotonicNowNs()
+        var outcome: McpActivityOutcome? = null
         return try {
-            withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
+            val args = parseArgs(arguments)
+            val result = withTimeout(invokeTimeoutMs) { tool.definition.handler.call(args) }
+            outcome = if (result.isError) McpActivityOutcome.ERROR else McpActivityOutcome.SUCCESS
+            result
         } catch (t: TimeoutCancellationException) {
+            outcome = McpActivityOutcome.TIMEOUT
             logger.warn(
                 LogCategory.SYSTEM,
                 "MCP tool handler timed out",
@@ -649,8 +665,10 @@ internal class McpToolRegistryCore(
         } catch (t: CancellationException) {
             // Caller cancellation (not our timeout) must propagate — swallowing it
             // would break structured concurrency during request cancel/shutdown.
+            outcome = McpActivityOutcome.CANCELLED
             throw t
         } catch (t: Throwable) {
+            outcome = McpActivityOutcome.ERROR
             logger.warn(
                 LogCategory.SYSTEM,
                 "MCP tool handler failed",
@@ -661,6 +679,33 @@ internal class McpToolRegistryCore(
                 ),
             )
             McpToolResult("Tool '$toolName' failed: ${t.message ?: t::class.simpleName}", isError = true)
+        } finally {
+            outcome?.let { completedOutcome ->
+                recordActivity(
+                    tool = tool,
+                    outcome = completedOutcome,
+                    startedAtNs = startedAtNs,
+                )
+            }
+        }
+    }
+
+    /** Activity telemetry is observational: ordinary store failures cannot change tool behavior. */
+    private fun recordActivity(
+        tool: RegisteredMcpTool,
+        outcome: McpActivityOutcome,
+        startedAtNs: Long,
+    ) {
+        try {
+            activityStore.append(
+                completedAtEpochMs = wallClockMs(),
+                durationMs = (monotonicNowNs() - startedAtNs).coerceAtLeast(0) / 1_000_000,
+                toolName = tool.definition.name,
+                providerId = tool.providerId,
+                outcome = outcome,
+            )
+        } catch (_: Exception) {
+            logger.warn(LogCategory.SYSTEM, "Could not record MCP activity")
         }
     }
 

@@ -126,6 +126,9 @@ object MenuActionsHandler {
     private val _openGlobalSearchEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val openGlobalSearchEvents: SharedFlow<String> = _openGlobalSearchEvents.asSharedFlow()
 
+    private val _showMcpActivityEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
+    val showMcpActivityEvents: SharedFlow<String> = _showMcpActivityEvents.asSharedFlow()
+
     private val _navigatePanelLeftEvents = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val navigatePanelLeftEvents: SharedFlow<String> = _navigatePanelLeftEvents.asSharedFlow()
 
@@ -550,6 +553,10 @@ object MenuActionsHandler {
      */
     fun triggerOpenGlobalSearch(windowId: String) {
         _openGlobalSearchEvents.tryEmit(windowId)
+    }
+
+    fun triggerShowMcpActivity(windowId: String) {
+        _showMcpActivityEvents.tryEmit(windowId)
     }
 
     /**

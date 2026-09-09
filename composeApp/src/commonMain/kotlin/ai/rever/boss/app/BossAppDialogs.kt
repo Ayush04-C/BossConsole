@@ -5,6 +5,7 @@ import ai.rever.boss.components.dialogs.CloneProjectDialog
 import ai.rever.boss.components.dialogs.ConfirmationDialog
 import ai.rever.boss.components.dialogs.GlobalSearchDialog
 import ai.rever.boss.components.dialogs.LogoutConfirmationDialog
+import ai.rever.boss.components.dialogs.McpActivityDialog
 import ai.rever.boss.components.dialogs.NewProjectWizardDialog
 import ai.rever.boss.components.dialogs.NewTabDialog
 import ai.rever.boss.components.dialogs.ProjectOpenModeDialog
@@ -43,6 +44,7 @@ import ai.rever.boss.dashboard.DashboardStatsManager
 import ai.rever.boss.icons.FileIcons
 import ai.rever.boss.keymap.KeymapSettingsManager
 import ai.rever.boss.keymap.model.KeymapActions
+import ai.rever.boss.mcp.McpToolRegistryImpl
 import ai.rever.boss.platform.rememberDirectoryPicker
 import ai.rever.boss.plugin.api.Panel.Companion.left
 import ai.rever.boss.plugin.api.Panel.Companion.top
@@ -452,6 +454,14 @@ internal fun BossAppDialogs(state: BossAppState) {
         // In the MAIN composition, not inside whichever chrome raised it - see BossAppState.
         state.draggablePanelComponent.ToolLauncherDialog(
             onDismiss = { state.showToolLauncherDialog = false },
+        )
+    }
+
+    if (state.showMcpActivityDialog) {
+        McpActivityDialog(
+            eventsFlow = McpToolRegistryImpl.activityEvents,
+            onClear = McpToolRegistryImpl::clearActivity,
+            onDismiss = { state.showMcpActivityDialog = false },
         )
     }
 

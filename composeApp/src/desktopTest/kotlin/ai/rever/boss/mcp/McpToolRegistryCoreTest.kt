@@ -598,6 +598,99 @@ class McpToolRegistryCoreTest {
             assertTrue(threw is CancellationException, "expected CancellationException, got $threw")
         }
 
+    @Test
+    fun `successful invocation records one success with deterministic clocks`() =
+        runBlocking {
+            val store = McpActivityStore()
+            var monotonicNs = 5_000_000L
+            val core =
+                McpToolRegistryCore(
+                    disabledFile = null,
+                    activityStore = store,
+                    wallClockMs = { 1_700_000_000_123L },
+                    monotonicNowNs = { monotonicNs.also { monotonicNs += 12_000_000L } },
+                )
+            core.registerProvider(provider("provider.exact", echoTool("safe_tool")))
+
+            assertEquals("ok:safe_tool", core.invoke("safe_tool", "{}").text)
+            assertEquals(
+                McpActivityEvent(1, 1_700_000_000_123L, 12, "safe_tool", "provider.exact", McpActivityOutcome.SUCCESS),
+                assertSingleActivity(store),
+            )
+        }
+
+    @Test
+    fun `declared and thrown errors record error without retaining sensitive values`() =
+        runBlocking {
+            val store = McpActivityStore()
+            val core = McpToolRegistryCore(disabledFile = null, activityStore = store)
+            core.registerProvider(
+                provider(
+                    "p1",
+                    echoTool("declared", handler = McpToolHandler { McpToolResult("RESULT_SENTINEL", isError = true) }),
+                    echoTool("throws", handler = McpToolHandler { error("EXCEPTION_SENTINEL") }),
+                ),
+            )
+
+            assertTrue(
+                core.invoke("declared", "{\"secret\":\"ARGUMENT_SENTINEL\"}").isError,
+            )
+            assertTrue(core.invoke("throws", "{}").isError)
+
+            assertEquals(
+                listOf(McpActivityOutcome.ERROR, McpActivityOutcome.ERROR),
+                store.events.value.map { it.outcome },
+            )
+            val retained = store.events.value.joinToString()
+            assertFalse(retained.contains("ARGUMENT_SENTINEL"))
+            assertFalse(retained.contains("RESULT_SENTINEL"))
+            assertFalse(retained.contains("EXCEPTION_SENTINEL"))
+        }
+
+    @Test
+    fun `timeout and caller cancellation each record their terminal outcome once`() =
+        runBlocking {
+            val timeoutStore = McpActivityStore()
+            val timeoutCore =
+                McpToolRegistryCore(disabledFile = null, invokeTimeoutMs = 10L, activityStore = timeoutStore)
+            timeoutCore.registerProvider(
+                provider("p1", echoTool("hang", handler = McpToolHandler { delay(1_000); McpToolResult("no") })),
+            )
+            assertTrue(timeoutCore.invoke("hang", "{}").isError)
+            assertEquals(McpActivityOutcome.TIMEOUT, assertSingleActivity(timeoutStore).outcome)
+
+            val cancellationStore = McpActivityStore()
+            val cancellationCore = McpToolRegistryCore(disabledFile = null, activityStore = cancellationStore)
+            cancellationCore.registerProvider(
+                provider("p1", echoTool("slow", handler = McpToolHandler { delay(1_000); McpToolResult("no") })),
+            )
+            var cancelled = false
+            try {
+                coroutineScope {
+                    val deferred = async { cancellationCore.invoke("slow", "{}") }
+                    delay(10)
+                    deferred.cancel()
+                    deferred.await()
+                }
+            } catch (_: CancellationException) {
+                cancelled = true
+            }
+            assertTrue(cancelled)
+            assertEquals(McpActivityOutcome.CANCELLED, assertSingleActivity(cancellationStore).outcome)
+        }
+
+    @Test
+    fun `lookup miss records no activity`() =
+        runBlocking {
+            val store = McpActivityStore()
+            val core = McpToolRegistryCore(disabledFile = null, activityStore = store)
+            assertTrue(core.invoke("absent", "{}").isError)
+            assertTrue(store.events.value.isEmpty())
+        }
+
+    private fun assertSingleActivity(store: McpActivityStore): McpActivityEvent =
+        assertEquals(1, store.events.value.size).let { store.events.value.single() }
+
     // ---------------------------------------------------------------------
     // Concurrency: the mutation lock must keep allTools/tools consistent
     // under mutators arriving from multiple threads (register/unregister/
