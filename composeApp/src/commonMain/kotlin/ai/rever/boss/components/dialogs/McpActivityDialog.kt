@@ -2,6 +2,7 @@ package ai.rever.boss.components.dialogs
 
 import ai.rever.boss.mcp.McpActivityEvent
 import ai.rever.boss.mcp.McpActivityOutcome
+import ai.rever.boss.mcp.McpActivityStore
 import ai.rever.boss.plugin.ui.BossDialog
 import ai.rever.boss.plugin.ui.BossTheme
 import androidx.compose.foundation.background
@@ -38,7 +39,7 @@ import java.time.format.DateTimeFormatter
 
 private val ACTIVITY_DIALOG_WIDTH = 960.dp
 private val ACTIVITY_LIST_MAX_HEIGHT = 480.dp
-private val ACTIVITY_TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
+private val ACTIVITY_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
 private const val MAX_IDENTIFIER_LENGTH = 160
 
 internal enum class McpActivityFilter {
@@ -85,7 +86,7 @@ internal fun formatMcpActivityCompletion(
 
 internal fun displayMcpActivityIdentifier(identifier: String): String {
     val clean = identifier.filterNot(Char::isISOControl)
-    if (clean.isBlank()) return "—"
+    if (clean.isBlank()) return "-"
     return if (clean.length > MAX_IDENTIFIER_LENGTH) clean.take(MAX_IDENTIFIER_LENGTH - 1) + "…" else clean
 }
 
@@ -113,13 +114,7 @@ internal fun McpActivityDialog(
                 Text("MCP Activity", color = BossTheme.colors.textPrimary, fontSize = 20.sp)
                 TextButton(onClick = onDismiss) { Text("Close", color = BossTheme.colors.signalText) }
             }
-            Text(
-                "Recent in-memory MCP activity only. Arguments and results are not recorded.",
-                color = BossTheme.colors.textSecondary,
-            )
-            if (events.size == 100) {
-                Text("Showing the most recent 100 events.", color = BossTheme.colors.textMuted, fontSize = 12.sp)
-            }
+            McpActivityNotice(events.size)
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 McpActivityFilter.entries.forEach { option ->
@@ -132,7 +127,7 @@ internal fun McpActivityDialog(
                     }
                 }
                 Spacer(Modifier.weight(1f))
-                Button(onClick = onClear, enabled = events.isNotEmpty()) { Text("Clear") }
+                Button(onClick = onClear, enabled = events.isNotEmpty()) { Text("Clear view") }
             }
             OutlinedTextField(
                 value = query,
@@ -157,13 +152,33 @@ internal fun McpActivityDialog(
 }
 
 @Composable
+private fun McpActivityNotice(eventCount: Int) {
+    Text(
+        "This view keeps only execution metadata. The separate audit ledger may retain sanitized call details.",
+        color = BossTheme.colors.textSecondary,
+    )
+    if (eventCount == McpActivityStore.CAPACITY) {
+        Text(
+            "Showing the most recent ${McpActivityStore.CAPACITY} events.",
+            color = BossTheme.colors.textMuted,
+            fontSize = 12.sp,
+        )
+    }
+    Text(
+        "Execution time excludes approval wait. Clear view affects all windows, not the audit ledger.",
+        color = BossTheme.colors.textMuted,
+        fontSize = 12.sp,
+    )
+}
+
+@Composable
 private fun McpActivityHeader() =
     Row(modifier = Modifier.fillMaxWidth()) {
         ActivityCell("STATUS", 0.9f)
         ActivityCell("TOOL NAME", 1.5f)
         ActivityCell("PROVIDER ID", 1.4f)
-        ActivityCell("DURATION", 0.8f)
-        ActivityCell("COMPLETION TIME", 1.1f)
+        ActivityCell("EXECUTION TIME", 1.1f)
+        ActivityCell("COMPLETED", 1.8f)
     }
 
 @Composable
@@ -172,8 +187,8 @@ private fun McpActivityRow(event: McpActivityEvent) =
         ActivityCell(event.outcome.name, 0.9f)
         ActivityCell(displayMcpActivityIdentifier(event.toolName), 1.5f)
         ActivityCell(displayMcpActivityIdentifier(event.providerId), 1.4f)
-        ActivityCell(formatMcpActivityDuration(event.durationMs), 0.8f)
-        ActivityCell(formatMcpActivityCompletion(event.completedAtEpochMs), 1.1f)
+        ActivityCell(formatMcpActivityDuration(event.durationMs), 1.1f)
+        ActivityCell(formatMcpActivityCompletion(event.completedAtEpochMs), 1.8f)
     }
 
 @Composable

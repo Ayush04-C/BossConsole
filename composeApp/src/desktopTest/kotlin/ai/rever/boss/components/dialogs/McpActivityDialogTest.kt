@@ -33,8 +33,8 @@ class McpActivityDialogTest {
     fun `formatters and display normalization are stable`() {
         assertEquals("999 ms", formatMcpActivityDuration(999))
         assertEquals("1.5 s", formatMcpActivityDuration(1_500))
-        assertEquals("00:00:00.000", formatMcpActivityCompletion(0, ZoneId.of("UTC")))
-        assertEquals("—", displayMcpActivityIdentifier("\u0000\n"))
+        assertEquals("1970-01-01 00:00:00", formatMcpActivityCompletion(0, ZoneId.of("UTC")))
+        assertEquals("-", displayMcpActivityIdentifier("\u0000\n"))
         assertEquals("ab", displayMcpActivityIdentifier("a\u0000b"))
         assertEquals(160, displayMcpActivityIdentifier("x".repeat(200)).length)
     }

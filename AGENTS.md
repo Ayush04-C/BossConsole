@@ -1055,3 +1055,14 @@ no second sandbox prompt. Explicit policies and session trust retain precedence.
 HIGH/CRITICAL names use the mutating default, while unknown names remain allowed
 by default. Risk reasons and sanitized arguments appear together in the existing
 approval dialog. #362 is closed pending extraction into a management plugin.
+
+## MCP activity timeline
+
+`View > MCP Activity` shows the process-wide last 100 completed host executions.
+It stores identifiers, completion time, execution duration and outcome only. It does
+not replace the separate governance audit ledger, which can persist sanitized call
+details. Clear view empties only this in-memory history, across all windows.
+Execution time excludes approval wait; the bottom-bar ledger duration includes it.
+Unknown, disabled, permission-denied and pre-execution rejected calls, approval
+wait timeouts, and transport failures are absent. This is not an agent attribution
+surface. Plugin placement remains a review consideration under issue #416.

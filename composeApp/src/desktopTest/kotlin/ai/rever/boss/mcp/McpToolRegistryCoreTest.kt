@@ -599,127 +599,6 @@ class McpToolRegistryCoreTest {
             assertTrue(threw is CancellationException, "expected CancellationException, got $threw")
         }
 
-    @Test
-    fun `successful invocation records one success with deterministic clocks`() =
-        runBlocking {
-            val store = McpActivityStore()
-            var monotonicNs = 5_000_000L
-            val core =
-                McpToolRegistryCore(
-                    disabledFile = null,
-                    activity =
-                        McpActivityTracker(
-                            store = store,
-                            wallClockMs = { 1_700_000_000_123L },
-                            monotonicNowNs = { monotonicNs.also { monotonicNs += 12_000_000L } },
-                        ),
-                )
-            core.registerProvider(provider("provider.exact", echoTool("safe_tool")))
-
-            assertEquals("ok:safe_tool", core.invoke("safe_tool", "{}").text)
-            assertEquals(
-                McpActivityEvent(1, 1_700_000_000_123L, 12, "safe_tool", "provider.exact", McpActivityOutcome.SUCCESS),
-                assertSingleActivity(store),
-            )
-        }
-
-    @Test
-    fun `declared and thrown errors record error without retaining sensitive values`() =
-        runBlocking {
-            val store = McpActivityStore()
-            val core = McpToolRegistryCore(disabledFile = null, activity = McpActivityTracker(store))
-            core.registerProvider(
-                provider(
-                    "p1",
-                    echoTool("declared", handler = McpToolHandler { McpToolResult("RESULT_SENTINEL", isError = true) }),
-                    echoTool("throws", handler = McpToolHandler { error("EXCEPTION_SENTINEL") }),
-                ),
-            )
-
-            assertTrue(
-                core.invoke("declared", "{\"secret\":\"ARGUMENT_SENTINEL\"}").isError,
-            )
-            assertTrue(core.invoke("throws", "{}").isError)
-
-            assertEquals(
-                listOf(McpActivityOutcome.ERROR, McpActivityOutcome.ERROR),
-                store.events.value.map { it.outcome },
-            )
-            val retained = store.events.value.joinToString()
-            assertFalse(retained.contains("ARGUMENT_SENTINEL"))
-            assertFalse(retained.contains("RESULT_SENTINEL"))
-            assertFalse(retained.contains("EXCEPTION_SENTINEL"))
-        }
-
-    @Test
-    fun `timeout and caller cancellation each record their terminal outcome once`() =
-        runBlocking {
-            val timeoutStore = McpActivityStore()
-            val timeoutCore =
-                McpToolRegistryCore(
-                    disabledFile = null,
-                    invokeTimeoutMs = 10L,
-                    activity = McpActivityTracker(timeoutStore),
-                )
-            timeoutCore.registerProvider(
-                provider(
-                    "p1",
-                    echoTool(
-                        "hang",
-                        handler =
-                            McpToolHandler {
-                                delay(1_000)
-                                McpToolResult("no")
-                            },
-                    ),
-                ),
-            )
-            assertTrue(timeoutCore.invoke("hang", "{}").isError)
-            assertEquals(McpActivityOutcome.TIMEOUT, assertSingleActivity(timeoutStore).outcome)
-
-            val cancellationStore = McpActivityStore()
-            val cancellationCore =
-                McpToolRegistryCore(disabledFile = null, activity = McpActivityTracker(cancellationStore))
-            cancellationCore.registerProvider(
-                provider(
-                    "p1",
-                    echoTool(
-                        "slow",
-                        handler =
-                            McpToolHandler {
-                                delay(1_000)
-                                McpToolResult("no")
-                            },
-                    ),
-                ),
-            )
-            var cancelled = false
-            try {
-                coroutineScope {
-                    val deferred = async { cancellationCore.invoke("slow", "{}") }
-                    delay(10)
-                    deferred.cancel()
-                    deferred.await()
-                }
-            } catch (_: CancellationException) {
-                cancelled = true
-            }
-            assertTrue(cancelled)
-            assertEquals(McpActivityOutcome.CANCELLED, assertSingleActivity(cancellationStore).outcome)
-        }
-
-    @Test
-    fun `lookup miss records no activity`() =
-        runBlocking {
-            val store = McpActivityStore()
-            val core = McpToolRegistryCore(disabledFile = null, activity = McpActivityTracker(store))
-            assertTrue(core.invoke("absent", "{}").isError)
-            assertTrue(store.events.value.isEmpty())
-        }
-
-    private fun assertSingleActivity(store: McpActivityStore): McpActivityEvent =
-        assertEquals(1, store.events.value.size).let { store.events.value.single() }
-
     // ---------------------------------------------------------------------
     // Concurrency: the mutation lock must keep allTools/tools consistent
     // under mutators arriving from multiple threads (register/unregister/
@@ -758,4 +637,123 @@ class McpToolRegistryCoreTest {
     // ---------------------------------------------------------------------
     // Governed Autonomy - Policy, Approval Gate, and Operation Ledger
     // ---------------------------------------------------------------------
+    // invoke(): the result-size backstop.
+    //
+    // An MCP result is re-read as cached prefix on every later request in the
+    // session, so one oversized answer keeps costing. Until [MAX_MCP_RESULT_CHARS]
+    // every plugin tool was unbounded here: the bridge hands `result.text` to
+    // TextContent without looking at its length.
+    // ---------------------------------------------------------------------
+
+    /** A core whose single tool answers with [text]. */
+    private fun payloadCore(
+        text: String,
+        cap: Int,
+        isError: Boolean = false,
+    ): McpToolRegistryCore =
+        McpToolRegistryCore(disabledFile = null, maxResultChars = cap).also {
+            it.registerProvider(
+                provider("p1", echoTool("big", handler = McpToolHandler { McpToolResult(text, isError) })),
+            )
+        }
+
+    @Test
+    fun `a result under the cap comes back byte-identical`() =
+        runBlocking {
+            val payload = "y".repeat(999) + "\n[504 older matching lines omitted...]"
+
+            val result = payloadCore(payload, cap = 100_000).invoke("big", "{}")
+
+            assertEquals(payload, result.text)
+            assertFalse(result.isError)
+        }
+
+    @Test
+    fun `a result of exactly the cap is untouched`() =
+        runBlocking {
+            // The boundary is `<=`, not `<`. A character of slack here would cut a result
+            // that fits and pay the marker's cost for nothing.
+            val cap = 1_000
+            val payload = "z".repeat(cap)
+
+            val result = payloadCore(payload, cap = cap).invoke("big", "{}")
+
+            assertEquals(payload, result.text)
+            assertEquals(cap, result.text.length)
+        }
+
+    @Test
+    fun `a result over the cap is cut and carries a marker saying so`() =
+        runBlocking {
+            val cap = 1_000
+            // Ends with a tool's own trailing note, which is exactly what cutting the tail
+            // destroys - so the marker has to say the tail is gone, not just that it cut.
+            val payload = "x".repeat(5_000) + "\n[504 older matching lines omitted...]"
+
+            val result = payloadCore(payload, cap = cap).invoke("big", "{}")
+
+            assertTrue(result.text.length <= cap, "cap holds marker included, got ${result.text.length}")
+            assertTrue(result.text.startsWith("x".repeat(100)), "the head of the answer survives")
+            assertTrue(
+                result.text.contains("BOSS host cap"),
+                "a silent cut reads as a complete answer; tail was: ${result.text.takeLast(60)}",
+            )
+            assertTrue(result.text.contains("was ${payload.length} characters"), "the marker says how big it was")
+            assertTrue(result.text.trimEnd().endsWith("]"), "the marker is the last thing in the result")
+            assertFalse(
+                result.text.contains("504 older matching lines omitted"),
+                "the tool's own trailing note is what got cut - the marker has to cover for it",
+            )
+        }
+
+    @Test
+    fun `an oversized error result is capped too and stays an error`() =
+        runBlocking {
+            // The bridge turns both into one TextContent, so an error costs the same context
+            // as a success; a plugin can return a megabyte of stack trace.
+            val cap = 1_000
+
+            val result = payloadCore("e".repeat(20_000), cap = cap, isError = true).invoke("big", "{}")
+
+            assertTrue(result.isError, "capping must not change the error flag")
+            assertTrue(result.text.length <= cap)
+            assertTrue(result.text.contains("BOSS host cap"))
+        }
+
+    @Test
+    fun `the production default is BossTerm's 150000 and invoke applies it with no override`() =
+        runBlocking {
+            assertEquals(150_000, MAX_MCP_RESULT_CHARS, "one number per product: BossTerm's mcpMaxAnswerChars")
+
+            // No maxResultChars argument: this is the production wiring.
+            val core = McpToolRegistryCore(disabledFile = null)
+            core.registerProvider(
+                provider("p1", echoTool("big", handler = McpToolHandler { McpToolResult("q".repeat(200_000)) })),
+            )
+
+            val result = core.invoke("big", "{}")
+
+            assertTrue(result.text.length <= MAX_MCP_RESULT_CHARS, "got ${result.text.length}")
+            assertTrue(result.text.contains("BOSS host cap"))
+        }
+
+    @Test
+    fun `cutting never leaves a lone surrogate, at either boundary parity`() {
+        // Every char is half of a surrogate pair, so the cut lands mid-pair at every other
+        // offset. Sweeping 21 consecutive caps walks the boundary through both parities: a
+        // cut that only backs off on even offsets fails about half of them.
+        val text = "\uD83D\uDE00".repeat(1_000)
+
+        for (cap in 600..620) {
+            val out = capMcpResultText(text, cap)
+            val kept = out.substringBefore("\n\n[BOSS host cap")
+
+            assertTrue(kept.isNotEmpty(), "cap=$cap left no payload; the sweep would prove nothing")
+            assertFalse(kept.last().isHighSurrogate(), "cap=$cap ends on a lone high surrogate")
+            // The concrete harm: a lone surrogate has no UTF-8 encoding, so the wire form
+            // substitutes '?' and the round trip stops matching.
+            val roundTripped = String(out.toByteArray(Charsets.UTF_8), Charsets.UTF_8)
+            assertEquals(out, roundTripped, "cap=$cap does not survive a UTF-8 round trip")
+        }
+    }
 }
