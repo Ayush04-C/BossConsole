@@ -29,6 +29,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Information about a system plugin that should always be installed.
@@ -1880,10 +1882,10 @@ internal class SidecarBackfillCoordinator(
         val stamp: JarStamp,
     )
 
-    private val pending = java.util.concurrent.ConcurrentHashMap<String, PendingJar>()
-    private val attempted = java.util.concurrent.ConcurrentHashMap.newKeySet<AttemptKey>()
+    private val pending = ConcurrentHashMap<String, PendingJar>()
+    private val attempted = ConcurrentHashMap.newKeySet<AttemptKey>()
     private val drainMutex = Mutex()
-    private val authenticationLosses = java.util.concurrent.atomic.AtomicLong()
+    private val authenticationLosses = AtomicLong()
 
     @Volatile
     private var authenticated = false
@@ -1951,8 +1953,7 @@ internal class SidecarBackfillCoordinator(
         }
     }
 
-    private fun isCurrentAndUnsigned(entry: PendingJar): Boolean =
-        stampOf(entry.jarFile) == entry.stamp && !sidecarExists(entry.jarFile)
+    private fun isCurrentAndUnsigned(entry: PendingJar): Boolean = stampOf(entry.jarFile) == entry.stamp && !sidecarExists(entry.jarFile)
 
     private fun stampOf(jarFile: File): JarStamp? {
         if (!jarFile.exists()) return null
