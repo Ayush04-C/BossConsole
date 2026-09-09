@@ -526,6 +526,16 @@ calling `create_secret` puts the new password in them.
 - Formatting is gated by ktlint (`./gradlew ktlintCheck`; fix with
   `./gradlew ktlintFormat`). Static analysis is gated by detekt with
   per-module baselines.
+- **Before every commit or push that changes Kotlin**, run the relevant module's
+  `ktlintCheck`, `detekt`, and focused tests. For Compose app work, use
+  `./gradlew :composeApp:ktlintCheck :composeApp:detekt` plus the affected
+  desktop tests. `git diff --check` catches whitespace only; it does not replace
+  ktlint. Before a PR or when changes span modules, run CI's full static gate:
+  `./gradlew detekt ktlintCheck`.
+- **When CI reports a failure**, reproduce the named Gradle task locally, fix the
+  root cause, and rerun that task plus the affected regression tests before any
+  follow-up push. Do not treat a passing compile or test task as evidence that
+  formatting or static analysis passed.
 - **Blame**: the tree-wide ktlint reformat is listed in
   `.git-blame-ignore-revs`; run
   `git config blame.ignoreRevsFile .git-blame-ignore-revs` once per clone so

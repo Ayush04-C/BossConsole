@@ -24,9 +24,24 @@ class McpActivityStoreTest {
         repeat(101) { append(store, "tool-$it") }
 
         assertEquals(100, store.events.value.size)
-        assertEquals(2L, store.events.value.first().sequence)
-        assertEquals(101L, store.events.value.last().sequence)
-        assertEquals("tool-1", store.events.value.first().toolName)
+        assertEquals(
+            2L,
+            store.events.value
+                .first()
+                .sequence,
+        )
+        assertEquals(
+            101L,
+            store.events.value
+                .last()
+                .sequence,
+        )
+        assertEquals(
+            "tool-1",
+            store.events.value
+                .first()
+                .toolName,
+        )
     }
 
     @Test
@@ -37,7 +52,13 @@ class McpActivityStoreTest {
         threads.forEach(Thread::join)
 
         assertEquals(50, store.events.value.size)
-        assertEquals(50, store.events.value.map { it.sequence }.toSet().size)
+        assertEquals(
+            50,
+            store.events.value
+                .map { it.sequence }
+                .toSet()
+                .size,
+        )
     }
 
     @Test
@@ -51,9 +72,24 @@ class McpActivityStoreTest {
         clearer.join()
 
         assertTrue(store.events.value.size <= McpActivityStore.CAPACITY)
-        assertEquals(store.events.value.size, store.events.value.map { it.sequence }.toSet().size)
+        assertEquals(
+            store.events.value.size,
+            store.events.value
+                .map { it.sequence }
+                .toSet()
+                .size,
+        )
     }
 
-    private fun append(store: McpActivityStore, toolName: String): McpActivityEvent =
-        store.append(1L, 2L, toolName, "provider", McpActivityOutcome.SUCCESS)
+    private fun append(
+        store: McpActivityStore,
+        toolName: String,
+    ): McpActivityEvent =
+        store.append(
+            completedAtEpochMs = 1L,
+            durationMs = 2L,
+            toolName = toolName,
+            providerId = "provider",
+            outcome = McpActivityOutcome.SUCCESS,
+        )
 }

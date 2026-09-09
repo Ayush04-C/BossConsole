@@ -662,7 +662,17 @@ class McpToolRegistryCoreTest {
                     activity = McpActivityTracker(timeoutStore),
                 )
             timeoutCore.registerProvider(
-                provider("p1", echoTool("hang", handler = McpToolHandler { delay(1_000); McpToolResult("no") })),
+                provider(
+                    "p1",
+                    echoTool(
+                        "hang",
+                        handler =
+                            McpToolHandler {
+                                delay(1_000)
+                                McpToolResult("no")
+                            },
+                    ),
+                ),
             )
             assertTrue(timeoutCore.invoke("hang", "{}").isError)
             assertEquals(McpActivityOutcome.TIMEOUT, assertSingleActivity(timeoutStore).outcome)
@@ -671,7 +681,17 @@ class McpToolRegistryCoreTest {
             val cancellationCore =
                 McpToolRegistryCore(disabledFile = null, activity = McpActivityTracker(cancellationStore))
             cancellationCore.registerProvider(
-                provider("p1", echoTool("slow", handler = McpToolHandler { delay(1_000); McpToolResult("no") })),
+                provider(
+                    "p1",
+                    echoTool(
+                        "slow",
+                        handler =
+                            McpToolHandler {
+                                delay(1_000)
+                                McpToolResult("no")
+                            },
+                    ),
+                ),
             )
             var cancelled = false
             try {

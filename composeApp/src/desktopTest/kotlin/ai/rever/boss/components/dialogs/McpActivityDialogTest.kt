@@ -39,6 +39,17 @@ class McpActivityDialogTest {
         assertEquals(160, displayMcpActivityIdentifier("x".repeat(200)).length)
     }
 
-    private fun event(sequence: Long, tool: String, provider: String, outcome: McpActivityOutcome) =
-        McpActivityEvent(sequence, 0L, 1L, tool, provider, outcome)
+    private fun event(
+        sequence: Long,
+        tool: String,
+        provider: String,
+        outcome: McpActivityOutcome,
+    ) = McpActivityEvent(
+        sequence = sequence,
+        completedAtEpochMs = 0L,
+        durationMs = 1L,
+        toolName = tool,
+        providerId = provider,
+        outcome = outcome,
+    )
 }

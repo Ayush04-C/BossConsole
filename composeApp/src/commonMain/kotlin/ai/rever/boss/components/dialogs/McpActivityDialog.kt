@@ -38,6 +38,7 @@ import java.time.format.DateTimeFormatter
 
 private val ACTIVITY_DIALOG_WIDTH = 960.dp
 private val ACTIVITY_LIST_MAX_HEIGHT = 480.dp
+private val ACTIVITY_TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
 private const val MAX_IDENTIFIER_LENGTH = 160
 
 internal enum class McpActivityFilter {
@@ -80,8 +81,7 @@ internal fun formatMcpActivityDuration(durationMs: Long): String =
 internal fun formatMcpActivityCompletion(
     epochMs: Long,
     zoneId: ZoneId = ZoneId.systemDefault(),
-): String =
-    DateTimeFormatter.ofPattern("HH:mm:ss.SSS").format(Instant.ofEpochMilli(epochMs).atZone(zoneId))
+): String = ACTIVITY_TIME_FORMATTER.format(Instant.ofEpochMilli(epochMs).atZone(zoneId))
 
 internal fun displayMcpActivityIdentifier(identifier: String): String {
     val clean = identifier.filterNot(Char::isISOControl)
@@ -177,7 +177,10 @@ private fun McpActivityRow(event: McpActivityEvent) =
     }
 
 @Composable
-private fun RowScope.ActivityCell(text: String, weight: Float) {
+private fun RowScope.ActivityCell(
+    text: String,
+    weight: Float,
+) {
     Text(
         text = text,
         modifier = Modifier.weight(weight).padding(end = 8.dp),
