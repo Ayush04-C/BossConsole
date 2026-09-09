@@ -23,10 +23,16 @@ import kotlin.time.Duration
  */
 class UpdateManager private constructor(
     private val installOperation: (suspend (String) -> InstallOutcome)?,
+    private val checkOperation: (suspend () -> UpdateInfo)?,
 ) {
-    constructor() : this(null)
+    constructor() : this(null, null)
 
-    internal constructor(installOperation: UpdateInstallOperation) : this(installOperation::install)
+    internal constructor(installOperation: UpdateInstallOperation) : this(installOperation::install, null)
+
+    internal constructor(
+        installOperation: UpdateInstallOperation,
+        checkOperation: suspend () -> UpdateInfo,
+    ) : this(installOperation::install, checkOperation)
 
     private val logger = BossLogger.forComponent("UpdateManager")
 
@@ -173,13 +179,13 @@ class UpdateManager private constructor(
             _updateState.value = UpdateState.CheckingForUpdates
             _lastCheckTime.value = Clock.System.now()
 
-            val updateInfo = updateService.checkForUpdates()
+            val updateInfo = checkOperation?.invoke() ?: updateService.checkForUpdates()
             _updateInfo.value = updateInfo
 
             when {
                 updateInfo.isNewerVersionAvailable -> {
                     if (!force && isVersionDismissed(updateInfo.latestVersion)) {
-                        // User dismissed this exact version: stay quiet (no banner, no dialog)
+                        // This exact version was dismissed or refused for this OS: stay quiet.
                         _updateState.value = UpdateState.Idle
                         UpdateResult.NoUpdateAvailable
                     } else {
@@ -413,7 +419,8 @@ class UpdateManager private constructor(
         // whichever lands first wins, and the loser returns without touching the file. It also
         // makes a second press of Install a no-op rather than a second elevated installer, which
         // the download center's dialog already got for free by clearing its action on use.
-        if (_updateState.claimStagedUpdate { UpdateState.Installing } == null) {
+        val claimed = _updateState.claimStagedUpdate { UpdateState.Installing }
+        if (claimed == null) {
             logger.info(
                 LogCategory.SYSTEM,
                 "Ignoring install request - nothing staged, or the staged update was claimed first",
@@ -422,28 +429,56 @@ class UpdateManager private constructor(
             return false
         }
         return try {
-            val outcome = installOperation?.invoke(downloadPath) ?: updateService.installUpdate(downloadPath)
+            // Use the path won by the claim. A stale UI action must not install an
+            // artifact staged later by another download.
+            val outcome =
+                if (installOperation != null) {
+                    installOperation.invoke(claimed.downloadPath)
+                } else {
+                    updateService.installUpdate(claimed.downloadPath)
+                }
             if (outcome.succeeded) {
                 _updateState.value = UpdateState.RestartRequired
             } else {
-                applyInstallFailure(outcome, _updateInfo.value)
+                applyInstallFailure(outcome, claimed)
             }
             outcome.succeeded
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             _updateState.value = UpdateState.Error("Installation failed: ${e.message}")
             false
         }
     }
 
-    /** Apply a failed install while preserving any refusal-specific follow-up. */
+    /**
+     * Applies the installer message directly: this is the only layer that knows
+     * why an install was refused, while a generic failure is indistinguishable
+     * from a crash to the person looking at the update UI.
+     */
     private suspend fun applyInstallFailure(
         outcome: InstallOutcome,
-        updateInfo: UpdateInfo?,
+        staged: UpdateState.ReadyToInstall,
     ) {
-        if (outcome.failureReason == InstallFailureReason.UnsupportedOs && updateInfo != null) {
-            persistDismissedVersion(updateInfo.latestVersion)
-        }
         _updateState.value = UpdateState.Error(outcome.errorMessage ?: "Installation failed")
+        if (
+            outcome.failureReason == InstallFailureReason.UnsupportedOs &&
+            staged.updateInfo?.isNewerVersionAvailable == true
+        ) {
+            logger.info(
+                LogCategory.SYSTEM,
+                "Suppressing update refused by this operating system",
+                mapOf("version" to staged.updateInfo.latestVersion.toString()),
+            )
+            persistDismissedVersion(staged.updateInfo.latestVersion)
+            try {
+                // The claimed path is the one this refusal owns. Never consult
+                // mutable current state, which may already name a later download.
+                updateService.discardDownload(staged.downloadPath)
+            } catch (e: Exception) {
+                logger.warn(LogCategory.SYSTEM, "Could not remove unsupported update artifact", error = e)
+            }
+        }
     }
 
     /** Record the exact update whose downloaded artifact is now ready to install. */
@@ -452,7 +487,7 @@ class UpdateManager private constructor(
         downloadPath: String,
     ) {
         _updateInfo.value = updateInfo
-        _updateState.value = UpdateState.ReadyToInstall(downloadPath)
+        _updateState.value = UpdateState.ReadyToInstall(downloadPath, updateInfo)
     }
 
     /**
@@ -522,6 +557,8 @@ sealed class UpdateState {
 
     data class ReadyToInstall(
         val downloadPath: String,
+        /** Immutable metadata for the artifact at [downloadPath]. */
+        val updateInfo: UpdateInfo? = null,
     ) : UpdateState()
 
     object Installing : UpdateState()

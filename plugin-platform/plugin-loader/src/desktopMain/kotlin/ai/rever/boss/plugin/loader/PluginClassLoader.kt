@@ -46,6 +46,9 @@ enum class ClassLoaderState {
  * name it has already resolved, host classes included, so `findLoadedClass`
  * keeps answering those after close and orderly teardown is unaffected. See
  * [loadClassChildFirst].
+ * Non-shared resources also stop delegating after ACTIVE, returning null/empty
+ * for misses while keeping own-JAR resources until close. Shared paths remain
+ * parent-first; META-INF/services is non-shared even for a shared interface.
  *
  * @param pluginId The ID of the plugin this classloader serves
  * @param urls URLs to the plugin JAR and its dependencies
@@ -59,6 +62,13 @@ class PluginClassLoader(
     private val sharedPackages: Set<String> = defaultSharedPackages,
 ) : URLClassLoader(urls, parent) {
     companion object {
+        init {
+            // Caller-sensitive: Kotlin emits this block into PluginClassLoader.<clinit>.
+            // Keep the call here, not in a companion helper whose caller is not a ClassLoader.
+            // PluginClassLoaderConcurrencyTest checks registration and independent-name progress.
+            registerAsParallelCapable()
+        }
+
         private val logger = BossLogger.forComponent("PluginClassLoader")
 
         /**
@@ -112,6 +122,34 @@ class PluginClassLoader(
                     "Refused a repeat request for an already-refused plugin class",
                     mapOf("pluginId" to pluginId, "className" to className, "state" to state.name),
                 )
+            }
+        }
+
+        /** Resource misses use the standard null/empty contract, with a best-effort diagnostic. */
+        private fun logResourceRefusal(
+            firstSighting: Boolean,
+            pluginId: String,
+            resourceName: String,
+            state: ClassLoaderState,
+        ) {
+            // Logging may fail during shutdown; it must never replace a missing
+            // resource with an unchecked exception on the caller's teardown thread.
+            runCatching {
+                val data = mapOf("pluginId" to pluginId, "resourceName" to resourceName, "state" to state.name)
+                if (firstSighting) {
+                    logger.warn(
+                        LogCategory.SYSTEM,
+                        "Refused to resolve a plugin resource against the host after unload",
+                        data,
+                        IllegalStateException("Plugin '$pluginId' requested resource '$resourceName' while $state"),
+                    )
+                } else {
+                    logger.debug(
+                        LogCategory.SYSTEM,
+                        "Refused a repeat request for an already-refused plugin resource",
+                        data,
+                    )
+                }
             }
         }
 
@@ -193,6 +231,14 @@ class PluginClassLoader(
     private val refusedClassNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /**
+     * One WARN per missing resource name across both lookup APIs; repeats use DEBUG.
+     * Retains one entry per distinct post-ACTIVE miss for this loader's lifetime.
+     * Arbitrary generated paths can grow this set; it is reclaimed with the loader,
+     * and satisfied own-JAR lookups do not add entries.
+     */
+    private val refusedResourceNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /**
      * Whether this classloader has been marked for unloading.
      */
     val isUnloading: Boolean get() = state != ClassLoaderState.ACTIVE
@@ -205,7 +251,9 @@ class PluginClassLoader(
     /**
      * Mark this classloader as being unloaded.
      *
-     * After calling this, no new classes should be loaded from this classloader.
+     * New child-first misses stop delegating to the parent. Own-jar and shared-class loads
+     * still work during teardown. A parent lookup admitted while ACTIVE can finish after
+     * this marker; the per-name class-loading locks are not an unload/drain barrier.
      */
     fun markUnloading() {
         if (_state.compareAndSet(ClassLoaderState.ACTIVE, ClassLoaderState.UNLOAD_IN_PROGRESS)) {
@@ -242,47 +290,50 @@ class PluginClassLoader(
     override fun loadClass(
         name: String,
         resolve: Boolean,
-    ): Class<*> {
-        // Check if already loaded
-        val loadedClass = findLoadedClass(name)
-        if (loadedClass != null) {
-            return loadedClass
-        }
+    ): Class<*> =
+        synchronized(getClassLoadingLock(name)) {
+            // Keep the lookup and definition under the same lock: concurrent first
+            // loads must not both miss here and define the same plugin class twice.
+            // Check if already loaded
+            val loadedClass = findLoadedClass(name)
+            if (loadedClass != null) {
+                return@synchronized loadedClass
+            }
 
-        // Check state. Loading is still allowed while the loader winds down —
-        // orderly teardown needs it: classes this loader already defined (the
-        // early return above), shared host classes (parent-first, below), and
-        // the plugin's own jar until close() shuts the jar. What is NOT allowed
-        // any more is delegating a class the plugin jar cannot supply to the
-        // host — see [loadClassChildFirst].
-        //
-        // DEBUG, not WARN: this fires on every post-ACTIVE attempt including the
-        // legitimate ones above, and it is not deduped, so at WARN a retry loop
-        // would bury the shutdown log with the benign message and hide the one
-        // that matters. The refusal in loadClassChildFirst is the WARN.
-        if (isUnloading) {
-            logger.debug(
-                LogCategory.SYSTEM,
-                "Attempt to load class from unloading classloader",
-                mapOf(
-                    "pluginId" to pluginId,
-                    "className" to name,
-                    "state" to state.name,
-                ),
-            )
-        }
+            // Check state. Loading is still allowed while the loader winds down —
+            // orderly teardown needs it: classes this loader already defined (the
+            // early return above), shared host classes (parent-first, below), and
+            // the plugin's own jar until close() shuts the jar. What is NOT allowed
+            // any more is delegating a class the plugin jar cannot supply to the
+            // host — see [loadClassChildFirst].
+            //
+            // DEBUG, not WARN: this fires on every post-ACTIVE attempt including the
+            // legitimate ones above, and it is not deduped, so at WARN a retry loop
+            // would bury the shutdown log with the benign message and hide the one
+            // that matters. The refusal in loadClassChildFirst is the WARN.
+            if (isUnloading) {
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Attempt to load class from unloading classloader",
+                    mapOf(
+                        "pluginId" to pluginId,
+                        "className" to name,
+                        "state" to state.name,
+                    ),
+                )
+            }
 
-        // Check if this is a shared package (parent-first)
-        val isSharedPackage = sharedPackages.any { name.startsWith(it) }
+            // Check if this is a shared package (parent-first)
+            val isSharedPackage = sharedPackages.any { name.startsWith(it) }
 
-        return if (isSharedPackage) {
-            // Parent-first loading for shared packages
-            super.loadClass(name, resolve)
-        } else {
-            // Child-first loading for plugin classes
-            loadClassChildFirst(name, resolve)
+            if (isSharedPackage) {
+                // Parent-first loading for shared packages
+                super.loadClass(name, resolve)
+            } else {
+                // Child-first loading for plugin classes
+                loadClassChildFirst(name, resolve)
+            }
         }
-    }
 
     /**
      * Load a class with child-first strategy.
@@ -372,6 +423,9 @@ class PluginClassLoader(
 
     /**
      * Get a resource with child-first strategy for plugin resources.
+     * Once unloading starts, a non-shared miss stays missing rather than
+     * substituting the host's copy. Resources in the still-open plugin JAR
+     * remain available to teardown code; shared resources remain parent-first.
      */
     override fun getResource(name: String): URL? {
         // For shared packages, use parent-first
@@ -380,11 +434,24 @@ class PluginClassLoader(
                 name.startsWith(it.replace('.', '/'))
             }
 
-        return if (isSharedResource) {
-            super.getResource(name)
-        } else {
-            // Child-first for plugin resources
-            findResource(name) ?: parent.getResource(name)
+        if (isSharedResource) {
+            return super.getResource(name)
+        }
+        val own = findResource(name)
+        val stateAtLookup = state
+        return when {
+            own != null -> {
+                own
+            }
+
+            stateAtLookup == ClassLoaderState.ACTIVE -> {
+                parent.getResource(name)
+            }
+
+            else -> {
+                logResourceRefusal(refusedResourceNames.add(name), pluginId, name, stateAtLookup)
+                null
+            }
         }
     }
 
@@ -395,6 +462,9 @@ class PluginClassLoader(
      * in the parent chain (whose jar carries its own
      * META-INF/boss-plugin/plugin.json and jar manifest) that would surface
      * the api jar's copy of non-shared resources ahead of the plugin's own.
+     * After unloading starts only own resources are enumerated, preventing
+     * META-INF/services discovery from silently switching to host providers.
+     * After close this is empty, as the plugin JAR can no longer be searched.
      */
     override fun getResources(name: String): java.util.Enumeration<URL> {
         val isSharedResource =
@@ -405,10 +475,20 @@ class PluginClassLoader(
             return super.getResources(name)
         }
         val own = java.util.Collections.list(findResources(name))
+        val stateAtLookup = state
         val fromParents =
-            java.util.Collections
-                .list(parent.getResources(name))
-                .filterNot { it in own }
+            if (stateAtLookup == ClassLoaderState.ACTIVE) {
+                java.util.Collections
+                    .list(parent.getResources(name))
+                    .filterNot { it in own }
+            } else {
+                // Keep the first WARN for a missing result, not a successful own-JAR
+                // lookup during teardown that merely excludes host contributions.
+                if (own.isEmpty()) {
+                    logResourceRefusal(refusedResourceNames.add(name), pluginId, name, stateAtLookup)
+                }
+                emptyList()
+            }
         return java.util.Collections.enumeration(own + fromParents)
     }
 

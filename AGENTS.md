@@ -122,6 +122,18 @@ an update-shaped verb (or an intent parameter) on the api rather than a change t
   dependency) and `PluginUpdateBridge` (an update can add a dependency the installed version
   never declared). A **reload** must not report: `resetPluginInstances`, the Toolbox reload and
   the evolver's hot reload all end in a load, and none is a user asking for anything.
+  **Re-enable is a user action in a way a reload is not.** `enablePlugin` and `handleAccessChange`
+  (RBAC un-hide) never go through those three install reporters, and after #178 a required
+  dependency can be removed while its dependent sits disabled. Both paths therefore raise the
+  same prompt via `DynamicPluginManager.onPluginActivated`, wired by `PluginLoaderDelegateSetup`
+  to `MissingDependencyReporter.report`. A redundant enable (already enabled) does not re-offer.
+  `PluginAccessTransitions` reconciles the first access snapshot, login and account changes
+  silently; only subsequent access changes for the same authenticated user can report.
+  An authenticated user with no permissions still establishes a baseline, so their first
+  real grant reports. Notification queues `reportPluginActivation` on the manager's scope,
+  checks files on `Dispatchers.IO` outside the registration lock, and uses the captured manifest.
+  The Enable caller never suspends on this advisory work before persisting its enabled flag;
+  cancellation belongs to the manager lifecycle. Manifests without dependencies skip reporting.
 - **Optional dependencies are reported, flagged, not dropped.** An optional dependency is how a
   plugin says "this feature needs that plugin". Dropping them would leave this reporting
   nothing for the case it was built for.
@@ -563,6 +575,39 @@ logger.error(LogCategory.NETWORK, "Request failed", error = exception)
 
 **Config**: Set `BOSS_LOG_LEVEL` env var or `boss.log.level` system property (TRACE/DEBUG/INFO/WARN/ERROR)
 
+## Browser native disposal
+
+`BrowserHandleImpl.dispose()` invalidates the handle and detaches its UI, then
+`BrowserNativeDisposal` closes the browser only after its owned renderer-call
+executors drain. Direct plugin disposal and host window teardown share this
+boundary. Never replace the drain with a fixed timeout followed by `browser.close()`:
+cancelling a caller's coroutine does not stop a JxBrowser round trip.
+
+`DrainingBrowserExecutor` signals actual executor termination, including failed
+calls and cancelled queued jobs. Waiting suspends in a host-owned scope without
+parking another thread. Keep `executeJavaScript` on `BoundedBrowserCall`: the
+JxBrowser async Consumer overload does not invoke its consumer on RPC error, so
+that callback alone cannot settle a native-operation count.
+
+Profile release must follow `awaitNativeDisposal`, through `disposeBrowserResources`.
+Its cleanup outlives cancellation of the caller. Both service entry points return
+without awaiting native close. A drain pending after ten seconds warns once with
+the handle id, then continues waiting safely.
+
+A genuinely wedged call retains its browser/profile until it returns or engine
+recovery releases it; native-close failure retains the potentially live profile
+and is logged. Keep its fence and `inUse` protection: dropping both would let a
+new browser reuse it or LRU eviction delete it. Named-profile creation/seeding
+waits at most ten seconds to acquire the fence, then reports that it is still in
+use rather than suspending indefinitely.
+
+The process-wide cleanup scopes use daemon threads. The shutdown hook does not
+drain them before forced engine close/process exit, so pending native close and
+profile cleanup can be abandoned at exit. Ephemeral leftovers are reclaimed on
+the next managed-profile creation. This is not a guaranteed shutdown flush. This
+is not an engine-abort mechanism and does not coordinate external raw-JxBrowser
+callers or engine-level forced closure.
+
 ## Browser telemetry, and how to turn it off
 
 The integrated browser reports which sites BOSS is used with and how - page views,
@@ -969,6 +1014,8 @@ the whole `TabTypeId`, whose equality includes `pluginId` and `defaultOrder`.
 
 ## Documentation
 
+- [MCP for agent-less operators](docs/mcp-agentless-operators.md) - Toolbox kill-switches and attach path
+
 - [Core Subsystems](docs/SUBSYSTEMS.md) - Auth, UI, keyboard shortcuts, threading, default applications, runner, BossTerm
 - [BossEditor](docs/BOSSEDITOR.md) - External editor dependency, LSP, PSI, editor features
 - [Application Features](docs/FEATURES.md) - Performance monitoring, dashboard, downloads, Chromium branding
@@ -979,3 +1026,22 @@ the whole `TabTypeId`, whose equality includes `pluginId` and `defaultOrder`.
 - [Windows Deep Link](docs/WINDOWS_DEEP_LINK_SETUP.md) - Windows protocol handler setup
 - [Release Rebuild](docs/RELEASE_REBUILD_GUIDE.md) - Re-running release builds
 
+
+
+### Governed MCP invocation (#371)
+
+The host policy applies to registry invocation; it does not isolate installed JVM
+plugins. Unknown tool names default to ALLOW. Known mutations default to ASK with
+a 45-second timeout. Each queued prompt is delivered to exactly one window and
+window teardown denies its owned request. Session trust is process-wide and can
+be cleared using “Revoke MCP session trust” in the bottom bar; restore the bar if
+it is hidden. Persistent rules currently require editing ~/.boss/mcp-tool-policy.json
+and restarting. Preserve a backup before manual recovery of a damaged policy;
+the fault flow withholds all tools until recovery. No automatic quarantine UI is
+provided. Ledger redaction is bounded and best effort, not a guarantee for secrets
+under arbitrary keys. Queue overflow and cancellation before/after dispatch have
+distinct ledger dispositions. Risk classification from #336 feeds this same policy and approval path; there is
+no second sandbox prompt. Explicit policies and session trust retain precedence.
+HIGH/CRITICAL names use the mutating default, while unknown names remain allowed
+by default. Risk reasons and sanitized arguments appear together in the existing
+approval dialog. #362 is closed pending extraction into a management plugin.
