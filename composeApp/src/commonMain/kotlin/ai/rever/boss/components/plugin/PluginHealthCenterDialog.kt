@@ -290,7 +290,10 @@ private fun currentHealthAction(
             healthStatesWithSandboxDisables(
                 states,
                 states.keys.filterTo(mutableSetOf()) { id ->
-                    manager.sandboxManager.getSandbox(id)?.state?.value == SandboxState.DISABLED
+                    manager.sandboxManager
+                        .getSandbox(id)
+                        ?.state
+                        ?.value == SandboxState.DISABLED
                 },
             ),
         loadGates = PluginLoadGateRegistry.gates.value,
