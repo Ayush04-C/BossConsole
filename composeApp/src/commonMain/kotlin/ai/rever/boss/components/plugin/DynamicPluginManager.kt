@@ -1357,9 +1357,8 @@ class DynamicPluginManager(
             // must resume any still-registered panels just like a refused uninstall does.
             logger.warn(
                 LogCategory.SYSTEM,
-                "Plugin uninstall cancelled after UI teardown; plugin remains installed and " +
-                    "closed tabs may need reopening",
-                mapOf("pluginId" to pluginId),
+                "Plugin uninstall caller cancelled; cleanup may already have completed",
+                mapOf("pluginId" to pluginId, "stillInstalled" to isInstalled(pluginId)),
             )
             notifyPanelsRefresh(pluginId)
             throw cancelled
