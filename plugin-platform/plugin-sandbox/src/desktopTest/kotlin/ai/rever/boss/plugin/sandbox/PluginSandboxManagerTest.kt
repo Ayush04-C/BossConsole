@@ -112,6 +112,19 @@ class PluginSandboxManagerTest {
             }
 
         @Test
+        fun `late watchdog disable cannot mark a replacement sandbox disabled`() =
+            runTest {
+                val old = manager.createSandbox("plugin-1") as InProcessPluginSandbox
+                manager.removeSandbox("plugin-1")
+                manager.createSandbox("plugin-1")
+                assertFalse(manager.markDisabledIfCurrent(old))
+                assertFalse(manager.isPluginDisabled("plugin-1"))
+                val current = manager.getSandbox("plugin-1") as InProcessPluginSandbox
+                assertTrue(manager.markDisabledIfCurrent(current))
+                assertTrue(manager.isPluginDisabled("plugin-1"))
+            }
+
+        @Test
         fun `removeSandbox is safe for unknown plugin`() =
             runTest {
                 // Should not throw
