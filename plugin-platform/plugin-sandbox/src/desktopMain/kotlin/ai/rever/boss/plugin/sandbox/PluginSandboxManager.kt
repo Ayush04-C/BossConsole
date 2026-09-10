@@ -587,8 +587,9 @@ class PluginSandboxManagerImpl(
             // for the life of the process. So: tear the sandbox down first,
             // and stop the watchdog once nothing is left that needs to suspend.
             val watchdog = watchdogs[pluginId]
-            sandbox.stop()
             if (markDisabledIfCurrent(sandbox)) {
+                sandbox.stop()
+                sandbox.setDisabled()
                 notifyListeners { it.onPluginDisabled(pluginId) }
                 // Last: stop this instance's watchdog, never a replacement's.
                 watchdog?.stop()

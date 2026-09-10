@@ -472,15 +472,14 @@ class InProcessPluginSandbox(
             // Under the lock, so a concurrent stop() cannot capture the
             // pool this restart just installed and retire it instead.
             retiredExecutor.shutdown()
+            // Publish the running generation under the same lock that accepts
+            // a restart. Otherwise setDisabled() can win between the check and
+            // this state write, leaving a disabled sandbox reporting RUNNING.
+            _healthMetrics.update { it.withSuccessfulRestart() }
+            _state.value = SandboxState.RUNNING
+            isRunning.set(true)
+            startHeartbeatJob()
         }
-
-        // Mark as running with successful restart metrics
-        _healthMetrics.update { it.withSuccessfulRestart() }
-        _state.value = SandboxState.RUNNING
-        isRunning.set(true)
-
-        // Start automatic heartbeat recording
-        startHeartbeatJob()
 
         return retiredExecutor
     }
