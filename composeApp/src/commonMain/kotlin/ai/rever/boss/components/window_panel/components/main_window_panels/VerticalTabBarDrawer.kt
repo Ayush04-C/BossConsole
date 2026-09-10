@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -24,7 +25,7 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
 /**
- * The full vertical tab bar shown as a temporary drawer over a panel whose bar is down to its
+ * The full vertical tab bar shown as a temporary drawer beside a panel whose bar is down to its
  * rail.
  *
  * **Why this is not just a Box with an offset.** Under HARDWARE_ACCELERATED JxBrowser - the
@@ -55,6 +56,7 @@ fun BoxScope.VerticalTabBarDrawer(
     hoverSource: MutableInteractionSource,
     hoverEnabled: Boolean,
     width: Dp,
+    railWidth: Dp,
     panelRegion: IntRect?,
     onDismissOutside: (() -> Unit)?,
     content: @Composable () -> Unit,
@@ -72,13 +74,14 @@ fun BoxScope.VerticalTabBarDrawer(
 
     val region = panelRegion ?: return
     val heavyweight = overlayCornerIsHeavyweight()
+    val drawerRegion = region.besideLeadingRail(railWidth)
 
     if (heavyweight) {
         OverlayCorner(
             alignment = Alignment.TopStart,
             // First-frame size only; later measurements use the parent region.
-            initialSize = DpSize(width, region.height.dp),
-            regionInWindow = region,
+            initialSize = DpSize(width, drawerRegion.height.dp),
+            regionInWindow = drawerRegion,
         ) {
             Box(modifier = Modifier.hoverable(hoverSource, enabled = hoverEnabled)) { content() }
         }
@@ -89,13 +92,23 @@ fun BoxScope.VerticalTabBarDrawer(
         // animating a native window's bounds per frame is a different and much worse trade.
         AnimatedVisibility(
             visible = true,
-            modifier = Modifier.align(Alignment.CenterStart).fillMaxHeight(),
+            modifier =
+                Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = railWidth)
+                    .fillMaxHeight(),
             enter = slideInHorizontally(initialOffsetX = { -it }),
             exit = slideOutHorizontally(targetOffsetX = { -it }),
         ) {
             Box(modifier = Modifier.hoverable(hoverSource, enabled = hoverEnabled)) { content() }
         }
     }
+}
+
+/** The drawer's usable overlay region after preserving the in-flow collapsed rail. */
+internal fun IntRect.besideLeadingRail(railWidth: Dp): IntRect {
+    val railEnd = (left + railWidth.value.roundToInt()).coerceAtMost(right)
+    return copy(left = railEnd)
 }
 
 /**

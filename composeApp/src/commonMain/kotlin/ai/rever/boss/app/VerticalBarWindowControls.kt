@@ -332,10 +332,9 @@ internal enum class VerticalBarHost {
  * What the vertical tab bar can host right now.
  *
  * Three states, not two, and an enum rather than a pair of booleans because two of the three are
- * the same bar: an EXPANDED left bar has a foot under its split map, a COLLAPSED one is a rail
- * whose bottom is the only room it has, and a collapsed bar whose hover drawer is OPEN has a foot
- * again for as long as the drawer is up, because the drawer is a full bar. Carried as two flags
- * these would admit "a foot AND a rail", which is not a window that exists.
+ * the same bar: an EXPANDED left bar has a foot under its split map, while a COLLAPSED one keeps
+ * its host actions in the rail even when its hover drawer is open. The drawer sits beside that
+ * rail, so moving actions into its foot would relocate targets already under the pointer.
  *
  * Pure and named because it is the one input to [focusQuickActionsPlacement] that is not a
  * standing preference, and because the scaffold that reads it is at detekt's complexity ceiling.
@@ -343,10 +342,10 @@ internal enum class VerticalBarHost {
 internal fun verticalBarHost(
     tabBarOnLeft: Boolean,
     barCollapsed: Boolean,
-    drawerVisible: Boolean,
+    @Suppress("UnusedParameter") drawerVisible: Boolean,
 ): VerticalBarHost =
     when {
         !tabBarOnLeft -> VerticalBarHost.NONE
-        !barCollapsed || drawerVisible -> VerticalBarHost.FOOT
+        !barCollapsed -> VerticalBarHost.FOOT
         else -> VerticalBarHost.RAIL
     }

@@ -61,7 +61,7 @@ class HostActionsWiringTest {
     )
 
     @Test
-    fun `the hover drawer moves the actions out of the rail, never doubles them`() {
+    fun `the hover drawer keeps the actions in the rail without doubling them`() {
         val drawerVisible = mutableStateOf(false)
         rule.setContent {
             val placement = placementFor(drawerVisible = drawerVisible.value)
@@ -83,11 +83,11 @@ class HostActionsWiringTest {
 
         drawerVisible.value = true
         rule.waitForIdle()
-        assertOnly(VERTICAL_BAR_HOST_ACTIONS_TAG, "the drawer is a full bar, so its foot takes them")
+        assertOnly(VERTICAL_BAR_RAIL_ACTIONS_TAG, "the drawer opens beside the rail, which keeps the actions")
 
         drawerVisible.value = false
         rule.waitForIdle()
-        assertOnly(VERTICAL_BAR_RAIL_ACTIONS_TAG, "and dismissing it hands them back to the rail")
+        assertOnly(VERTICAL_BAR_RAIL_ACTIONS_TAG, "and dismissing it leaves them there")
     }
 
     /** Exactly one of the two bar layouts on screen, and it is [expected]. */

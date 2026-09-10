@@ -65,6 +65,10 @@ object SwingTooltip {
                         // A JWindow is non-focusable by default; make it explicit so it can never
                         // steal focus from the browser when it appears.
                         focusableWindowState = false
+                        // The hover drawer is an always-on-top native window too. Keeping this
+                        // tooltip in that layer and raising it after show prevents a retained rail
+                        // action's label from being covered by its sibling drawer.
+                        isAlwaysOnTop = true
                         contentPane.add(fresh)
                         pack() // size to the label
                     }
@@ -96,6 +100,7 @@ object SwingTooltip {
                 w.setLocation(x, y)
             }
             w.isVisible = true
+            w.toFront()
             window = w
         }
     }
