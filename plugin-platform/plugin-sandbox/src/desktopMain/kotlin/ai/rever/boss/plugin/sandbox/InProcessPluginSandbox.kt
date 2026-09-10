@@ -384,10 +384,10 @@ class InProcessPluginSandbox(
      * `rememberCoroutineScope`, so closing the tab or switching side panels
      * during the up-to-two-second `awaitTermination` cancelled exactly here.
      */
-    override suspend fun restart(): Result<Unit> {
+    override suspend fun restart(): Result<Unit> =
         if (disabled.get()) {
-            return Result.failure(IllegalStateException("Plugin sandbox is disabled"))
-        }
+            Result.failure(IllegalStateException("Plugin sandbox is disabled"))
+        } else {
         logger.info(
             LogCategory.SYSTEM,
             "Restarting plugin sandbox",
@@ -397,36 +397,33 @@ class InProcessPluginSandbox(
             ),
         )
 
-        val retiredExecutor =
-            runCatching { swapInFreshRuntime() }
-                .getOrElse { error ->
-                    // Only reachable if the fresh pool cannot be created at all.
-                    // UNHEALTHY rather than RESTARTING because the watchdog
-                    // still looks at UNHEALTHY, so a sandbox this failed on can
-                    // still be seen and retried.
-                    _state.value = SandboxState.UNHEALTHY
-                    logger.error(
-                        LogCategory.SYSTEM,
-                        "Failed to restart plugin sandbox",
-                        mapOf(
-                            "pluginId" to pluginId,
-                        ),
-                        error,
-                    )
-                    return Result.failure(error)
-                }
+        val swap = runCatching { swapInFreshRuntime() }
+        val retiredExecutor = swap.getOrNull()
+        when {
+            swap.isFailure -> {
+                _state.value = SandboxState.UNHEALTHY
+                val error = requireNotNull(swap.exceptionOrNull())
+                logger.error(
+                    LogCategory.SYSTEM,
+                    "Failed to restart plugin sandbox",
+                    mapOf("pluginId" to pluginId),
+                    error,
+                )
+                Result.failure(error)
+            }
 
-        if (retiredExecutor == null) {
-            return Result.failure(IllegalStateException("Plugin sandbox was disabled during restart"))
-        }
+            retiredExecutor == null -> {
+                Result.failure(IllegalStateException("Plugin sandbox was disabled during restart"))
+            }
 
-        logger.info(
+            else -> {
+                logger.info(
             LogCategory.SYSTEM,
             "Plugin sandbox restarted successfully",
             mapOf(
                 "pluginId" to pluginId,
             ),
-        )
+                )
 
         // Cleanup of the pool the plugin no longer runs on. It has already had
         // shutdown() called under the lock, so it drains either way; this only
@@ -434,8 +431,10 @@ class InProcessPluginSandbox(
         // here is allowed to propagate - the sandbox is already running, and
         // swallowing a CancellationException into Result.failure would report a
         // restart that did happen as one that did not.
-        shutdownExecutor(retiredExecutor)
-        return Result.success(Unit)
+                shutdownExecutor(retiredExecutor)
+                Result.success(Unit)
+            }
+        }
     }
 
     /**
