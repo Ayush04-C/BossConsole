@@ -99,6 +99,19 @@ class PluginSandboxManagerTest {
             }
 
         @Test
+        fun `removing disabled sandbox clears recovery bookkeeping before replacement`() =
+            runTest {
+                val old = manager.createSandbox("plugin-1")
+                manager.disablePlugin("plugin-1").getOrThrow()
+                assertTrue(manager.isPluginDisabled("plugin-1"))
+                manager.removeSandbox("plugin-1")
+                assertFalse(manager.isPluginDisabled("plugin-1"))
+                val replacement = manager.createSandbox("plugin-1")
+                assertTrue(old !== replacement)
+                assertFalse(manager.isPluginDisabled("plugin-1"))
+            }
+
+        @Test
         fun `removeSandbox is safe for unknown plugin`() =
             runTest {
                 // Should not throw

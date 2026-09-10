@@ -1428,7 +1428,7 @@ class DynamicPluginManager(
                         )
                         val trackingContext = trackingContexts.remove(pluginId)
                         trackingContext?.unregisterAll()
-                        managerScope.launch { sandboxManager.removeSandbox(pluginId) }
+                        sandboxManager.removeSandbox(pluginId)
                         removePluginState(pluginId)
                         return@withLock Result.success(Unit)
                     }
@@ -1497,16 +1497,12 @@ class DynamicPluginManager(
                 val trackingContext = trackingContexts.remove(pluginId)
                 trackingContext?.unregisterAll()
 
-                // Remove sandbox
-                managerScope.launch {
-                    sandboxManager.removeSandbox(pluginId)
-                }
+                // Complete teardown before reload can create a replacement sandbox for this ID.
+                sandboxManager.removeSandbox(pluginId)
 
                 // Terminate out-of-process child if applicable
                 if (manifest.isolationMode == "out-of-process") {
-                    managerScope.launch {
-                        outOfProcessSpawner?.terminate(pluginId)
-                    }
+                    outOfProcessSpawner?.terminate(pluginId)
                 }
 
                 // Unload the plugin

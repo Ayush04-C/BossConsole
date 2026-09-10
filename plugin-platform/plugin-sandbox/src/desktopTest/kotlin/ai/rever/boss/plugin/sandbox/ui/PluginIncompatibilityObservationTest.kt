@@ -1,6 +1,8 @@
 package ai.rever.boss.plugin.sandbox.ui
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
@@ -15,7 +17,10 @@ class PluginIncompatibilityObservationTest {
             val observed = mutableListOf<Boolean>()
             val job =
                 launch(Dispatchers.Unconfined) {
-                    PluginCrashRegistry.incompatiblePlugins.collect { observed.add(id in it) }
+                    PluginCrashRegistry.incompatiblePlugins
+                        .map { id in it }
+                        .distinctUntilChanged()
+                        .collect { observed.add(it) }
                 }
             try {
                 PluginCrashRegistry.markIncompatible(id)

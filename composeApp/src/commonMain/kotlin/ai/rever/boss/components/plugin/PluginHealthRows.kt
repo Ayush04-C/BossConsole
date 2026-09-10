@@ -20,7 +20,7 @@ internal fun pluginHealthRows(
     incompatiblePluginIds: Set<String>,
 ): List<PluginHealthRow> {
     val pluginIds =
-        (pluginStates.keys + loadGates.keys + crashedPluginIds + incompatiblePluginIds + inaccessiblePluginIds).toSet()
+        (pluginStates.keys + loadGates.keys + crashedPluginIds + inaccessiblePluginIds).toSet()
     return pluginIds
         .map { pluginId ->
             healthRowFor(
@@ -91,7 +91,7 @@ private fun infoRow(
 
         info.errorMessage != null || info.state == PluginState.ERROR -> {
             attentionRow(info, "The plugin reported a manager error.").copy(
-                action = reloadActionFor(info),
+                action = reloadActionFor(input.pluginId, info),
             )
         }
 
@@ -168,10 +168,13 @@ private fun attentionRow(
     detail,
 )
 
-private fun reloadActionFor(info: DynamicPluginInfo): PluginHealthAction? =
+private fun reloadActionFor(
+    pluginId: String,
+    info: DynamicPluginInfo,
+): PluginHealthAction? =
     if (
         info.state == PluginState.LOADED &&
-        !HotReloadPolicy.requiresRestartInsteadOfHotReload(info.manifest.pluginId)
+        !HotReloadPolicy.requiresRestartInsteadOfHotReload(pluginId)
     ) {
         PluginHealthAction.RELOAD
     } else {

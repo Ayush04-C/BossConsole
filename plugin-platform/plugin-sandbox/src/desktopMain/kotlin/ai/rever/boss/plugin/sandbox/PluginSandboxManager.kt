@@ -344,6 +344,8 @@ class PluginSandboxManagerImpl(
         // Stop and remove sandbox
         sandboxes[pluginId]?.stop()
         sandboxes.remove(pluginId)
+        // Disable state belongs to the removed instance, not its future replacement.
+        disabledPlugins.remove(pluginId)
 
         // Unregister from health monitor
         healthMonitor.unregisterSandbox(pluginId)

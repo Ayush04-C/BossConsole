@@ -221,6 +221,16 @@ class PluginHealthCenterTest {
         assertEquals(emptySet(), healthInaccessiblePluginIds(states, true, emptySet()))
     }
 
+    @Test
+    fun `process-wide incompatibility does not create rows for another window or an uninstalled plugin`() {
+        assertEquals(emptyList(), pluginHealthRows(emptyMap(), emptyMap(), emptySet(), emptySet(), setOf("other")))
+        val states = mapOf("notes" to plugin("notes", "Notes", PluginState.LOADED))
+        val rows = pluginHealthRows(states, emptyMap(), emptySet(), emptySet(), setOf("other", "notes"))
+        assertEquals(listOf("notes"), rows.map { it.pluginId })
+        assertEquals(PluginHealthStatus.NEEDS_ATTENTION, rows.single().status)
+        assertNull(rows.single().action)
+    }
+
     private fun plugin(
         id: String,
         name: String,
