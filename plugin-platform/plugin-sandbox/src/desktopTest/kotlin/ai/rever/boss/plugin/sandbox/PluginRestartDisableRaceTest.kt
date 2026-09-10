@@ -23,8 +23,9 @@ class PluginRestartDisableRaceTest {
     @Test
     fun `budget disable rejects restart while executor teardown is parked`() =
         runBlocking {
-            val manager = PluginSandboxManagerImpl(SandboxConfig(maxRestartAttempts = 0))
-            val sandbox = manager.createSandbox("budget-disable-race") as InProcessPluginSandbox
+            val config = SandboxConfig(maxRestartAttempts = 0)
+            val manager = PluginSandboxManagerImpl(config)
+            val sandbox = manager.createSandbox("budget-disable-race", config) as InProcessPluginSandbox
             val entered = CountDownLatch(1)
             val release = CountDownLatch(1)
             sandbox.start().getOrThrow()
@@ -106,7 +107,10 @@ class PluginRestartDisableRaceTest {
             }
         }
 
-    private fun blockedOn(thread: Thread, lock: Any): Boolean {
+    private fun blockedOn(
+        thread: Thread,
+        lock: Any,
+    ): Boolean {
         val info = ManagementFactory.getThreadMXBean().getThreadInfo(thread.id) ?: return false
         return info.threadState == Thread.State.BLOCKED &&
             info.lockInfo?.identityHashCode == System.identityHashCode(lock)
