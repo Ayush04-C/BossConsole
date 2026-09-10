@@ -210,6 +210,50 @@ class PluginSandboxManagerTest {
                     raceManager.dispose()
                 }
             }
+
+        @Test
+        fun `backoff restart cannot affect a replacement sandbox`() =
+            runBlocking {
+                val enteredBackoff = CompletableDeferred<Unit>()
+                val releaseBackoff = CompletableDeferred<Unit>()
+                val config = SandboxConfig(restartBackoffBaseMs = 1)
+                val raceManager =
+                    PluginSandboxManagerImpl(
+                        defaultConfig = config,
+                        awaitRestartBackoff = {
+                            enteredBackoff.complete(Unit)
+                            releaseBackoff.await()
+                        },
+                    )
+                var restarted = false
+                raceManager.addListener(
+                    object : PluginSandboxListener {
+                        override fun onPluginRestarted(pluginId: String) {
+                            restarted = true
+                        }
+                    },
+                )
+                val old = raceManager.createSandbox("plugin-1", config) as InProcessPluginSandbox
+                old.start()
+                val scheduled = async { raceManager.handleRestartRequest("plugin-1") }
+                try {
+                    withTimeout(5_000) { enteredBackoff.await() }
+                    raceManager.removeSandbox("plugin-1")
+                    val replacement = raceManager.createSandbox("plugin-1", config) as InProcessPluginSandbox
+                    replacement.start()
+
+                    releaseBackoff.complete(Unit)
+                    withTimeout(5_000) { scheduled.await() }
+
+                    assertFalse(restarted, "A backoff from the removed sandbox must not restart its replacement")
+                    assertEquals(SandboxState.RUNNING, replacement.state.value)
+                    assertTrue(old.isExecutorTerminated())
+                } finally {
+                    releaseBackoff.complete(Unit)
+                    scheduled.join()
+                    raceManager.dispose()
+                }
+            }
     }
 
     @Nested
@@ -244,6 +288,7 @@ class PluginSandboxManagerTest {
                 manager.enablePlugin("plugin-1")
 
                 assertFalse(manager.isPluginDisabled("plugin-1"))
+                assertTrue(manager.restartPlugin("plugin-1").isSuccess)
             }
 
         @Test
