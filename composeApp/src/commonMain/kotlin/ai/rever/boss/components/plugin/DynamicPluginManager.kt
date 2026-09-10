@@ -1359,6 +1359,26 @@ class DynamicPluginManager(
             throw cancelled
         }
 
+    /** Cancellation must reach the public compensation before a free mutex admits destructive cleanup. */
+    internal suspend fun teardownPluginTabsForUnload(pluginId: String) {
+        pluginTabsTeardown?.let { teardown ->
+            try {
+                teardown(pluginId)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                logger.warn(
+                    LogCategory.SYSTEM,
+                    "Plugin tab teardown before unload failed (continuing)",
+                    mapOf(
+                        "pluginId" to pluginId,
+                        "error" to (t.message ?: t::class.simpleName),
+                    ),
+                )
+            }
+        }
+    }
+
     private suspend fun uninstallPlugin(
         pluginId: String,
         force: Boolean,
@@ -1393,20 +1413,7 @@ class DynamicPluginManager(
             candidate != null &&
             (force || (candidate.manifest.canUnload && checkCanUnload(pluginId).isAllowed))
         ) {
-            pluginTabsTeardown?.let { teardown ->
-                try {
-                    teardown(pluginId)
-                } catch (t: Throwable) {
-                    logger.warn(
-                        LogCategory.SYSTEM,
-                        "Plugin tab teardown before unload failed (continuing)",
-                        mapOf(
-                            "pluginId" to pluginId,
-                            "error" to (t.message ?: t::class.simpleName),
-                        ),
-                    )
-                }
-            }
+            teardownPluginTabsForUnload(pluginId)
         }
         return mutex.withLock {
             // Once destructive cleanup starts, finish sandbox, loader and state cleanup even if

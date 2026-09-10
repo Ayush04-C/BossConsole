@@ -59,6 +59,42 @@ class PluginSandboxUnloadAwaitTest {
             }
         }
 
+    @Test
+    fun `cancellation during UI disposal cannot proceed into destructive cleanup`() =
+        runBlocking {
+            val sandboxManager = PluginSandboxManagerImpl()
+            val manager =
+                DynamicPluginManager(
+                    PanelRegistry(),
+                    TabRegistry(),
+                    sandboxManager,
+                    createSandboxedContext = { _, _ -> error("No plugin is loaded in this fixture") },
+                )
+            val previousTeardown = DynamicPluginManager.pluginTabsTeardown
+            val started = CompletableDeferred<Unit>()
+            val disposal = CompletableDeferred<Unit>()
+            var proceeded = false
+            DynamicPluginManager.pluginTabsTeardown = {
+                started.complete(Unit)
+                disposal.await()
+            }
+            val teardown =
+                async(start = CoroutineStart.UNDISPATCHED) {
+                    manager.teardownPluginTabsForUnload("disposal-plugin")
+                    proceeded = true
+                }
+            try {
+                withTimeout(5_000) { started.await() }
+                teardown.cancel()
+                withTimeout(5_000) { teardown.join() }
+                assertFalse(proceeded, "Cancelled disposal must propagate before acquiring even an uncontended lock")
+            } finally {
+                DynamicPluginManager.pluginTabsTeardown = previousTeardown
+                manager.disposeWindow()
+                sandboxManager.dispose()
+            }
+        }
+
     private fun verifyRemoval(cancelCaller: Boolean) =
         runBlocking {
             val real = PluginSandboxManagerImpl()

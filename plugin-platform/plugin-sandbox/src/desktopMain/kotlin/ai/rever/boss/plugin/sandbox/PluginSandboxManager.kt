@@ -102,7 +102,8 @@ interface PluginSandboxManager {
     suspend fun restartPlugin(pluginId: String): Result<Unit>
 
     /**
-     * Disable a plugin. It will be stopped and won't auto-restart.
+     * Disable an existing plugin. It will be stopped and won't auto-restart.
+     * A missing sandbox is already stopped and is a no-op.
      * @param pluginId Plugin identifier
      * @return Result indicating success or failure
      */
@@ -321,8 +322,8 @@ class PluginSandboxManagerImpl(
     override fun getSandbox(pluginId: String): PluginSandbox? = sandboxes[pluginId]
 
     /**
-     * Note the watchdog-then-sandbox order here, in [disablePlugin] and in
-     * [fullyUnloadPlugin]. It is safe at these three sites only because none of
+     * Note the watchdog-then-sandbox order here and in [fullyUnloadPlugin].
+     * It is safe at these two sites only because neither of
      * them is reached from inside a watchdog coroutine. The same order in
      * [handleRestartRequest] stopped the coroutine that was executing it and so
      * skipped the suspending pool teardown entirely - see the comment there
@@ -456,11 +457,20 @@ class PluginSandboxManagerImpl(
             )
 
             // Missing/removed instances must not leave a disable flag for a future replacement.
-            val sandbox = sandboxes[pluginId] ?: return@runCatching
+            val sandbox = sandboxes[pluginId]
+            if (sandbox == null) {
+                logger.debug(
+                    LogCategory.SYSTEM,
+                    "Disable skipped: sandbox already removed",
+                    mapOf("pluginId" to pluginId),
+                )
+                return@runCatching
+            }
             val watchdog = watchdogs[pluginId]
-            watchdog?.stop()
             sandbox.stop()
             if (markDisabledIfCurrent(sandbox)) {
+                // Guard the watchdog too: a replacement may have arrived between the map reads.
+                watchdog?.stop()
                 notifyListeners { it.onPluginDisabled(pluginId) }
             }
         }
