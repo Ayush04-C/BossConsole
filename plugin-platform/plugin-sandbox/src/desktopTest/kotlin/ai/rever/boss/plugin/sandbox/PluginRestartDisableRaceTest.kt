@@ -63,8 +63,12 @@ class PluginRestartDisableRaceTest {
             val release = CountDownLatch(1)
             val failure = AtomicReference<Throwable?>()
             val restartLock =
-                sandbox.javaClass.getDeclaredField("restartLock").apply { isAccessible = true }.get(sandbox)
+                sandbox.javaClass
+                    .getDeclaredField("restartLock")
+                    .apply { isAccessible = true }
+                    .get(sandbox)
             val stateField = sandbox.javaClass.getDeclaredField("_state").apply { isAccessible = true }
+
             @Suppress("UNCHECKED_CAST")
             val state = stateField.get(sandbox) as MutableStateFlow<SandboxState>
             // Park the real restart at its final publication, without adding a production hook.
