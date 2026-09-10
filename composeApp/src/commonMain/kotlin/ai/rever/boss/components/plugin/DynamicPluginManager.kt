@@ -1355,6 +1355,11 @@ class DynamicPluginManager(
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             // Tab/panel disposal happens before the lock; cancellation while waiting for it
             // must resume any still-registered panels just like a refused uninstall does.
+            logger.warn(
+                LogCategory.SYSTEM,
+                "Plugin uninstall cancelled after UI teardown; plugin remains installed and closed tabs may need reopening",
+                mapOf("pluginId" to pluginId),
+            )
             notifyPanelsRefresh(pluginId)
             throw cancelled
         }

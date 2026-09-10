@@ -1,6 +1,7 @@
 package ai.rever.boss.plugin.sandbox
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
@@ -165,6 +166,49 @@ class PluginSandboxManagerTest {
                 val result = manager.restartPlugin("plugin-1")
 
                 assertTrue(result.isSuccess)
+            }
+
+        @Test
+        fun `backoff restart cannot resurrect a sandbox disabled while it waits`() =
+            runBlocking {
+                val enteredBackoff = CompletableDeferred<Unit>()
+                val releaseBackoff = CompletableDeferred<Unit>()
+                val config = SandboxConfig(restartBackoffBaseMs = 1)
+                val raceManager =
+                    PluginSandboxManagerImpl(
+                        defaultConfig = config,
+                        awaitRestartBackoff = {
+                            enteredBackoff.complete(Unit)
+                            releaseBackoff.await()
+                        },
+                    )
+                var restarted = false
+                raceManager.addListener(
+                    object : PluginSandboxListener {
+                        override fun onPluginRestarted(pluginId: String) {
+                            restarted = true
+                        }
+                    },
+                )
+                val sandbox = raceManager.createSandbox("plugin-1", config) as InProcessPluginSandbox
+                sandbox.start()
+                val scheduled = async { raceManager.handleRestartRequest("plugin-1") }
+                try {
+                    withTimeout(5_000) { enteredBackoff.await() }
+                    raceManager.disablePlugin("plugin-1").getOrThrow()
+                    assertTrue(raceManager.isPluginDisabled("plugin-1"))
+
+                    releaseBackoff.complete(Unit)
+                    withTimeout(5_000) { scheduled.await() }
+
+                    assertFalse(restarted, "A restart queued for the disabled sandbox must be rejected")
+                    assertEquals(SandboxState.DISABLED, sandbox.state.value)
+                    assertTrue(sandbox.isExecutorTerminated())
+                } finally {
+                    releaseBackoff.complete(Unit)
+                    scheduled.join()
+                    raceManager.dispose()
+                }
             }
     }
 

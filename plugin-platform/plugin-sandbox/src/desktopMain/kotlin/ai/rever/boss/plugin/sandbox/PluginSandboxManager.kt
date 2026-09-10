@@ -173,6 +173,7 @@ interface PluginSandboxListener {
  */
 class PluginSandboxManagerImpl(
     private val defaultConfig: SandboxConfig = SandboxConfig(),
+    private val awaitRestartBackoff: suspend (Long) -> Unit = { delay -> kotlinx.coroutines.delay(delay) },
 ) : PluginSandboxManager {
     private val logger = BossLogger.forComponent("PluginSandboxManager")
 
@@ -417,6 +418,11 @@ class PluginSandboxManagerImpl(
             sandboxes[pluginId]
                 ?: return Result.failure(IllegalArgumentException("No sandbox found for plugin: $pluginId"))
 
+        return restartSandbox(sandbox)
+    }
+
+    private suspend fun restartSandbox(sandbox: InProcessPluginSandbox): Result<Unit> {
+        val pluginId = sandbox.pluginId
         logger.info(
             LogCategory.SYSTEM,
             "Restarting plugin",
@@ -446,6 +452,23 @@ class PluginSandboxManagerImpl(
         }
     }
 
+    /** Admit a delayed watchdog restart only for the sandbox generation that scheduled it. */
+    private suspend fun restartIfCurrentAndEnabled(sandbox: InProcessPluginSandbox): Result<Unit> {
+        val admitted =
+            synchronized(sandboxes) {
+                sandboxes[sandbox.pluginId] === sandbox && sandbox.pluginId !in disabledPlugins
+            }
+        if (!admitted) {
+            logger.info(
+                LogCategory.SYSTEM,
+                "Skipping stale plugin watchdog restart",
+                mapOf("pluginId" to sandbox.pluginId),
+            )
+            return Result.failure(IllegalStateException("Plugin sandbox restart is no longer current"))
+        }
+        return restartSandbox(sandbox)
+    }
+
     override suspend fun disablePlugin(pluginId: String): Result<Unit> =
         runCatching {
             logger.info(
@@ -467,8 +490,12 @@ class PluginSandboxManagerImpl(
                 return@runCatching
             }
             val watchdog = watchdogs[pluginId]
-            sandbox.stop()
             if (markDisabledIfCurrent(sandbox)) {
+                // Publish disabled before teardown so a backoff that wakes while stop() suspends
+                // cannot admit a restart for this sandbox generation.
+                sandbox.stop()
+                // stop() publishes STOPPED; retain the explicit terminal state for callers.
+                sandbox.setDisabled()
                 // Guard the watchdog too: a replacement may have arrived between the map reads.
                 watchdog?.stop()
                 notifyListeners { it.onPluginDisabled(pluginId) }
@@ -489,6 +516,7 @@ class PluginSandboxManagerImpl(
 
             val sandbox = sandboxes[pluginId]
             if (sandbox != null) {
+                sandbox.clearDisabledForEnable()
                 // Restart the watchdog
                 val watchdog =
                     PluginWatchdog(
@@ -579,8 +607,8 @@ class PluginSandboxManagerImpl(
             ),
         )
 
-        kotlinx.coroutines.delay(backoffDelay)
-        restartPlugin(pluginId)
+        awaitRestartBackoff(backoffDelay)
+        restartIfCurrentAndEnabled(sandbox)
     }
 
     private fun calculateBackoff(

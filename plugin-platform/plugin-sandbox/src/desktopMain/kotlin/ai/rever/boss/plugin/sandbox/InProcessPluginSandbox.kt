@@ -40,6 +40,7 @@ class InProcessPluginSandbox(
     /** Readable by the manager, which enforces this plugin's restart budget. */
     internal val config: SandboxConfig = SandboxConfig(),
 ) : PluginSandbox {
+    private val disabled = AtomicBoolean(false)
     private val logger = BossLogger.forComponent("InProcessPluginSandbox")
 
     // State management
@@ -384,6 +385,9 @@ class InProcessPluginSandbox(
      * during the up-to-two-second `awaitTermination` cancelled exactly here.
      */
     override suspend fun restart(): Result<Unit> {
+        if (disabled.get()) {
+            return Result.failure(IllegalStateException("Plugin sandbox is disabled"))
+        }
         logger.info(
             LogCategory.SYSTEM,
             "Restarting plugin sandbox",
@@ -412,6 +416,10 @@ class InProcessPluginSandbox(
                     return Result.failure(error)
                 }
 
+        if (retiredExecutor == null) {
+            return Result.failure(IllegalStateException("Plugin sandbox was disabled during restart"))
+        }
+
         logger.info(
             LogCategory.SYSTEM,
             "Plugin sandbox restarted successfully",
@@ -439,19 +447,19 @@ class InProcessPluginSandbox(
      *
      * @return the retired pool, for the caller to wait on.
      */
-    private fun swapInFreshRuntime(): ExecutorService {
-        _state.value = SandboxState.RESTARTING
-
-        // Record the crash
-        _healthMetrics.update { it.withCrash() }
-
-        // Cancel heartbeat job
-        heartbeatJob?.cancel()
-        heartbeatJob = null
-
+    private fun swapInFreshRuntime(): ExecutorService? {
         // Synchronize executor/job swap to prevent other threads from accessing stale references
         val retiredExecutor: ExecutorService
         synchronized(restartLock) {
+            if (disabled.get()) return null
+            _state.value = SandboxState.RESTARTING
+
+            // Record the crash
+            _healthMetrics.update { it.withCrash() }
+
+            // Cancel heartbeat job
+            heartbeatJob?.cancel()
+            heartbeatJob = null
             // Cancel the plugin's in-flight coroutines and re-arm the scope
             // for new work. The scope object itself is deliberately kept -
             // see the note on [sandboxScope].
@@ -591,7 +599,17 @@ class InProcessPluginSandbox(
                 "pluginId" to pluginId,
             ),
         )
-        _state.value = SandboxState.DISABLED
+        synchronized(restartLock) {
+            disabled.set(true)
+            _state.value = SandboxState.DISABLED
+        }
+    }
+
+    /** Only the manager's explicit enable path may re-arm a disabled sandbox. */
+    internal fun clearDisabledForEnable() {
+        synchronized(restartLock) {
+            disabled.set(false)
+        }
     }
 
     /**
