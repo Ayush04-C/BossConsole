@@ -171,6 +171,17 @@ class PluginSandboxManagerTest {
     @Nested
     inner class DisableEnableTests {
         @Test
+        fun `disable after removal cannot poison a future sandbox`() =
+            runTest {
+                manager.createSandbox("plugin-1")
+                manager.removeSandbox("plugin-1")
+                manager.disablePlugin("plugin-1").getOrThrow()
+                assertFalse(manager.isPluginDisabled("plugin-1"))
+                manager.createSandbox("plugin-1")
+                assertFalse(manager.isPluginDisabled("plugin-1"))
+            }
+
+        @Test
         fun `disablePlugin marks plugin as disabled`() =
             runTest {
                 manager.createSandbox("plugin-1")

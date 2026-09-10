@@ -455,19 +455,14 @@ class PluginSandboxManagerImpl(
                 ),
             )
 
-            disabledPlugins.add(pluginId)
-
-            val sandbox = sandboxes[pluginId]
-            if (sandbox != null) {
-                // Stop the watchdog to prevent auto-restart
-                watchdogs[pluginId]?.stop()
-
-                // Stop the sandbox and set state to DISABLED
-                sandbox.stop()
-                sandbox.setDisabled()
+            // Missing/removed instances must not leave a disable flag for a future replacement.
+            val sandbox = sandboxes[pluginId] ?: return@runCatching
+            val watchdog = watchdogs[pluginId]
+            watchdog?.stop()
+            sandbox.stop()
+            if (markDisabledIfCurrent(sandbox)) {
+                notifyListeners { it.onPluginDisabled(pluginId) }
             }
-
-            notifyListeners { it.onPluginDisabled(pluginId) }
         }
 
     override suspend fun enablePlugin(pluginId: String): Result<Unit> =

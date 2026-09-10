@@ -12,6 +12,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertFalse
@@ -23,6 +24,40 @@ class PluginSandboxUnloadAwaitTest {
 
     @Test
     fun `caller cancellation cannot abandon destructive cleanup`() = verifyRemoval(cancelCaller = true)
+
+    @Test
+    fun `cancellation waiting for cleanup lock refreshes surviving panels`() =
+        runBlocking {
+            val sandboxManager = PluginSandboxManagerImpl()
+            val manager =
+                DynamicPluginManager(
+                    PanelRegistry(),
+                    TabRegistry(),
+                    sandboxManager,
+                    createSandboxedContext = { _, _ -> error("No plugin is loaded in this fixture") },
+                )
+            val lock =
+                manager.javaClass
+                    .getDeclaredField("mutex")
+                    .apply { isAccessible = true }
+                    .get(manager) as Mutex
+            val previousRefresh = DynamicPluginManager.pluginPanelsRefresh
+            var refreshed = false
+            DynamicPluginManager.pluginPanelsRefresh = { id, _ -> if (id == "waiting-plugin") refreshed = true }
+            lock.lock()
+            val uninstall = async(start = CoroutineStart.UNDISPATCHED) { manager.uninstallPlugin("waiting-plugin") }
+            try {
+                assertFalse(uninstall.isCompleted)
+                uninstall.cancel()
+                withTimeout(5_000) { uninstall.join() }
+                assertTrue(refreshed, "Cancellation must compensate panel detachment before lock acquisition")
+            } finally {
+                lock.unlock()
+                DynamicPluginManager.pluginPanelsRefresh = previousRefresh
+                manager.disposeWindow()
+                sandboxManager.dispose()
+            }
+        }
 
     private fun verifyRemoval(cancelCaller: Boolean) =
         runBlocking {
@@ -57,7 +92,7 @@ class PluginSandboxUnloadAwaitTest {
             val uninstall = async(start = CoroutineStart.UNDISPATCHED) { manager.uninstallPlugin(id, force = true) }
             try {
                 withTimeout(5_000) { started.await() }
-                assertFalse(uninstall.isCompleted, "reload must not overtake its sandbox removal")
+                assertFalse(uninstall.isCompleted, "uninstall must await its sandbox removal")
                 if (cancelCaller) uninstall.cancel()
                 release.complete(Unit)
                 if (cancelCaller) {
