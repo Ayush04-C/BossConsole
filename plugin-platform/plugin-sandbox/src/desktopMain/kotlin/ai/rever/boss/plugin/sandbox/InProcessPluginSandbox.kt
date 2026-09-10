@@ -388,54 +388,54 @@ class InProcessPluginSandbox(
         if (disabled.get()) {
             Result.failure(IllegalStateException("Plugin sandbox is disabled"))
         } else {
-        logger.info(
-            LogCategory.SYSTEM,
-            "Restarting plugin sandbox",
-            mapOf(
-                "pluginId" to pluginId,
-                "restartAttempt" to (_healthMetrics.value.restartAttempts + 1),
-            ),
-        )
+            logger.info(
+                LogCategory.SYSTEM,
+                "Restarting plugin sandbox",
+                mapOf(
+                    "pluginId" to pluginId,
+                    "restartAttempt" to (_healthMetrics.value.restartAttempts + 1),
+                ),
+            )
 
-        val swap = runCatching { swapInFreshRuntime() }
-        val retiredExecutor = swap.getOrNull()
-        when {
-            swap.isFailure -> {
-                _state.value = SandboxState.UNHEALTHY
-                val error = requireNotNull(swap.exceptionOrNull())
-                logger.error(
-                    LogCategory.SYSTEM,
-                    "Failed to restart plugin sandbox",
-                    mapOf("pluginId" to pluginId),
-                    error,
-                )
-                Result.failure(error)
-            }
+            val swap = runCatching { swapInFreshRuntime() }
+            val retiredExecutor = swap.getOrNull()
+            when {
+                swap.isFailure -> {
+                    _state.value = SandboxState.UNHEALTHY
+                    val error = requireNotNull(swap.exceptionOrNull())
+                    logger.error(
+                        LogCategory.SYSTEM,
+                        "Failed to restart plugin sandbox",
+                        mapOf("pluginId" to pluginId),
+                        error,
+                    )
+                    Result.failure(error)
+                }
 
-            retiredExecutor == null -> {
-                Result.failure(IllegalStateException("Plugin sandbox was disabled during restart"))
-            }
+                retiredExecutor == null -> {
+                    Result.failure(IllegalStateException("Plugin sandbox was disabled during restart"))
+                }
 
-            else -> {
-                logger.info(
-            LogCategory.SYSTEM,
-            "Plugin sandbox restarted successfully",
-            mapOf(
-                "pluginId" to pluginId,
-            ),
-                )
+                else -> {
+                    logger.info(
+                        LogCategory.SYSTEM,
+                        "Plugin sandbox restarted successfully",
+                        mapOf(
+                            "pluginId" to pluginId,
+                        ),
+                    )
 
-        // Cleanup of the pool the plugin no longer runs on. It has already had
-        // shutdown() called under the lock, so it drains either way; this only
-        // waits for it and force-kills a pool that will not go. Cancellation
-        // here is allowed to propagate - the sandbox is already running, and
-        // swallowing a CancellationException into Result.failure would report a
-        // restart that did happen as one that did not.
-                shutdownExecutor(retiredExecutor)
-                Result.success(Unit)
+                    // Cleanup of the pool the plugin no longer runs on. It has already had
+                    // shutdown() called under the lock, so it drains either way; this only
+                    // waits for it and force-kills a pool that will not go. Cancellation
+                    // here is allowed to propagate - the sandbox is already running, and
+                    // swallowing a CancellationException into Result.failure would report a
+                    // restart that did happen as one that did not.
+                    shutdownExecutor(retiredExecutor)
+                    Result.success(Unit)
+                }
             }
         }
-    }
 
     /**
      * Swap in a fresh pool and bring the sandbox back to [SandboxState.RUNNING].
