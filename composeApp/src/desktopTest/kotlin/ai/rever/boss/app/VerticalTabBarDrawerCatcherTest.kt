@@ -5,8 +5,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -31,12 +31,13 @@ import kotlin.test.assertEquals
  * but hover itself is not asserted here. Pressing the part of the panel the drawer does not
  * cover still dismisses.
  *
- * The catcher is composed before the heavyweight/lightweight split, so its hit region is under
- * test in both rendering modes; only the panel-region press below additionally depends on the
- * lightweight layout, which is the path composed in a test (`OverlayConfig.heavyweightCorner`
- * is never set there, so `overlayCornerIsHeavyweight()` is false). Presses inside the drawer's
- * press-transparent content also dismiss by fall-through to the catcher; that pre-existing
- * behaviour is deliberately not pinned here.
+ * The catcher is mode-independent code, so what this test pins holds in both rendering modes;
+ * the panel-region press additionally depends on the lightweight layout, which is the path
+ * composed in a test (`OverlayConfig.heavyweightCorner` is never set there, so
+ * `overlayCornerIsHeavyweight()` is false) - and under HARDWARE the catcher can be occluded by
+ * the browser's native surface entirely (see the chevron comment in `WindowVerticalTabBar`).
+ * In this test the drawer's stub content has no pointer input, so presses inside it fall
+ * through to the catcher; that pre-existing behaviour is deliberately not pinned here.
  */
 class VerticalTabBarDrawerCatcherTest {
     @get:Rule
@@ -65,8 +66,8 @@ class VerticalTabBarDrawerCatcherTest {
                     hoverEnabled = false,
                     width = PANEL_SIZE,
                     railWidth = RAIL_WIDTH,
-                    // Exists only to satisfy the parameter's null guard; its dimensions are
-                    // irrelevant on this path (and deliberately not PANEL_SIZE).
+                    // Exists only to satisfy the parameter's null guard; nothing on this
+                    // path reads its dimensions.
                     panelRegion = IntRect(0, 0, 300, 400),
                     onDismissOutside = { dismissals++ },
                 ) {
