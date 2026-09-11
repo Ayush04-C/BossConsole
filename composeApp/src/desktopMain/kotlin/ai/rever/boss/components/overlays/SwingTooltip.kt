@@ -21,6 +21,11 @@ import java.awt.Color as AwtColor
  *  - It's positioned from [MouseInfo] (exact screen coordinates), avoiding window/inset/DPI
  *    coordinate conversion — a tooltip near the cursor is the conventional placement anyway.
  *
+ * Always-on-top is a consequence of that JWindow layer, not a feature: the label sits above
+ * EVERY application, not just BOSS, until hover exit hides it (a Cmd/Alt-Tab away with a label
+ * up can leave it lingering over the other app), and toFront() on a non-focusable window is a
+ * best-effort hint under some X11 window managers.
+ *
  * Only used when [OverlayConfig.useHeavyweightPopups] is true (HARDWARE mode); otherwise callers
  * keep using the normal Compose tooltip, so this cannot affect the OFF_SCREEN default.
  */

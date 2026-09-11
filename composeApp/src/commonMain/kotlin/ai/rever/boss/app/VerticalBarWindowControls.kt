@@ -338,6 +338,13 @@ internal enum class VerticalBarHost {
  *
  * Pure and named because it is the one input to [focusQuickActionsPlacement] that is not a
  * standing preference, and because the scaffold that reads it is at detekt's complexity ceiling.
+ *
+ * [drawerVisible] is deliberately NOT an input: the rail keeps its actions while the drawer is
+ * open, so the answer must not move with the drawer. The parameter is kept as a documented
+ * hedge for a future decision that does need the drawer's state, rather than deleted and
+ * re-plumbed later - and it is stated here because the reporting chain behind it (Scaffold
+ * state, SplitView's LaunchedEffect) is still live, and recomposes the scaffold on every
+ * drawer open/close.
  */
 internal fun verticalBarHost(
     tabBarOnLeft: Boolean,

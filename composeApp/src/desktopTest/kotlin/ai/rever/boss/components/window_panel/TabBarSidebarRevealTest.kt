@@ -82,4 +82,16 @@ class TabBarSidebarRevealTest {
             panel.besideLeadingRail(36.dp),
         )
     }
+
+    @Test
+    fun `a panel narrower than the rail coerces to a zero-width region`() {
+        // left + railWidth passes right, so the drawer gets nothing beside the rail; the
+        // zero-width answer is what resolveRegion's documented inset fallback then acts on.
+        // Pin the coercion direction so that inheritance stays a deliberate choice.
+        val panel = IntRect(left = 40, top = 12, right = 50, bottom = 612)
+        val region = panel.besideLeadingRail(36.dp)
+
+        assertEquals(50, region.left)
+        assertEquals(region.left, region.right, "the drawer region is zero-width, not negative")
+    }
 }

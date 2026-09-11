@@ -35,10 +35,12 @@ import kotlin.test.assertNull
  *
  * The first test exists because that second failure SHIPPED in this change's first draft: one slot
  * was handed to both the collapsed rail and the hover drawer on the reasoning that "a rail is
- * TAB_BAR_RAIL and a full bar is TAB_BAR_FOOTER, never both". `SplitViewPanel` composes the rail
- * and the drawer TOGETHER - the drawer is an overlay over the rail, not a replacement - so with
- * the drawer up the rail drew the full bar's wrapping row at 36dp wide, four lines of squeezed
- * icons, visible for the frame after dismissal.
+ * TAB_BAR_RAIL and a full bar is TAB_BAR_FOOTER, never both". Back then the drawer was an overlay
+ * over the rail, and with the drawer up the rail drew the full bar's wrapping row at 36dp wide -
+ * four lines of squeezed icons, visible for the frame after dismissal. The drawer now reveals
+ * BESIDE the rail, and the invariant the test pins is the conclusion of that fix: `SplitViewPanel`
+ * still composes rail and drawer together, but the rail keeps its one slot in every drawer state
+ * and the drawer never takes it.
  */
 class HostActionsWiringTest {
     @get:Rule
