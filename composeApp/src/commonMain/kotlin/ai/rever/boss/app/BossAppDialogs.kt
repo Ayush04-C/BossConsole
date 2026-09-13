@@ -509,6 +509,7 @@ internal fun BossAppDialogs(state: BossAppState) {
 
         GlobalSearchDialog(
             projectPath = selectedProject.path,
+            fileIndexer = state.spotlightFileIndexes.indexerFor(selectedProject.path),
             workspaceManager = workspaceManager,
             windowId = windowId,
             onDismiss = {

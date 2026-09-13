@@ -25,9 +25,12 @@ private val logger = BossLogger.forComponent("FileIndexer")
  * for fast searching. Excludes common non-essential directories like
  * build outputs, node_modules, and hidden files.
  *
- * Thread-safe: Uses a mutex to prevent concurrent indexing operations.
+ * Thread-safe: Uses a mutex to serialize indexing operations. Requests are queued rather than
+ * dropped, so callers that share an indexer must avoid submitting unbounded work.
  */
-class FileIndexer {
+class FileIndexer(
+    private val scan: (suspend (String) -> List<IndexedFile>)? = null,
+) {
     /** Mutex to ensure only one indexing operation runs at a time. */
     private val indexingMutex = Mutex()
 
@@ -39,12 +42,6 @@ class FileIndexer {
 
     private val _indexedPath = MutableStateFlow<String?>(null)
     val indexedPath: StateFlow<String?> = _indexedPath.asStateFlow()
-
-    /**
-     * A controllable scanner for deterministic indexer tests. Production leaves this null and
-     * continues to scan the filesystem on [Dispatchers.IO].
-     */
-    internal var scanForTest: (suspend (String) -> List<IndexedFile>)? = null
 
     /**
      * Directories to exclude from indexing.
@@ -112,7 +109,7 @@ class FileIndexer {
                 val startTime = System.currentTimeMillis()
 
                 val files =
-                    scanForTest?.invoke(projectPath)
+                    scan?.invoke(projectPath)
                         ?: withContext(Dispatchers.IO) {
                             scanProjectFiles(projectPath)
                         }

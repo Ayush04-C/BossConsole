@@ -1,11 +1,13 @@
 package ai.rever.boss.search
 
 import ai.rever.boss.components.dialogs.SpotlightDialogState
+import java.io.File
 import kotlinx.coroutines.runBlocking
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class GlobalSearchIsolationTest {
@@ -73,6 +75,16 @@ class GlobalSearchIsolationTest {
 
         assertEquals(emptyList(), second.results)
         assertEquals(SearchCategory.ALL, second.activeCategory)
+    }
+
+    @Test
+    fun `dialog receives a window-owned indexer instead of constructing one per open`() {
+        val dialogSource = File("src/commonMain/kotlin/ai/rever/boss/components/dialogs/GlobalSearchDialog.kt").readText()
+        val hostSource = File("src/commonMain/kotlin/ai/rever/boss/app/BossAppDialogs.kt").readText()
+
+        assertTrue(dialogSource.contains("fileIndexer: FileIndexer"))
+        assertFalse(dialogSource.contains("remember(projectPath) { FileIndexer() }"))
+        assertTrue(hostSource.contains("fileIndexer = state.spotlightFileIndexes.indexerFor(selectedProject.path)"))
     }
 
     private fun List<SearchResult>.fileResults() = filterIsInstance<SearchResult.FileResult>()

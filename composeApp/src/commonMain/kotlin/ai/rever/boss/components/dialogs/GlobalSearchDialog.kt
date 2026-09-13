@@ -74,6 +74,7 @@ internal class SpotlightDialogState {
     var activeCategory by mutableStateOf(SearchCategory.ALL)
     var selectedIndex by mutableStateOf(0)
     var isSearching by mutableStateOf(false)
+    var scrollToSelected by mutableStateOf(false)
 }
 
 // Theme colors — reactive getters into the BOSS design system tokens
@@ -136,6 +137,7 @@ private val TrailingChipMaxWidth = 140.dp
  * UI inspired by macOS Spotlight and the BOSS Dashboard design.
  *
  * @param projectPath The project directory to search in
+ * @param fileIndexer The window-owned index for [projectPath], retained across dialog reopen
  * @param onDismiss Called when dialog should close
  * @param onFileSelect Called when a file is selected, with the file's absolute path
  * @param onTabSelect Called when an open tab is selected, with windowId, panelId, and tabId
@@ -145,6 +147,7 @@ private val TrailingChipMaxWidth = 140.dp
 @Composable
 fun GlobalSearchDialog(
     projectPath: String,
+    fileIndexer: FileIndexer,
     workspaceManager: WorkspaceManager,
     windowId: String,
     onDismiss: () -> Unit,
@@ -158,10 +161,9 @@ fun GlobalSearchDialog(
     onPageSelect: ((url: String) -> Unit)? = null,
     onMcpToolSelect: ((result: SearchResult.McpToolResult) -> Unit)? = null,
 ) {
-    val dialogState = remember(projectPath) { SpotlightDialogState() }
-    val fileIndexer = remember(projectPath) { FileIndexer() }
-    // Track if selection was changed by keyboard (to enable scroll) vs hover (no scroll)
-    var scrollToSelected by remember(projectPath) { mutableStateOf(false) }
+    // The conditional caller removes this dialog on close, so this state belongs to exactly one
+    // open session. The window owns the longer-lived file index passed above.
+    val dialogState = remember { SpotlightDialogState() }
     val indexedFiles by fileIndexer.indexedFiles.collectAsState()
     val isIndexing by fileIndexer.isIndexing.collectAsState()
     val listState = rememberLazyListState()
@@ -207,8 +209,8 @@ fun GlobalSearchDialog(
     SpotlightSearchEffect(dialogState, windowId, indexedFiles)
 
     // Auto-scroll to selected item (only when triggered by keyboard)
-    LaunchedEffect(dialogState.selectedIndex, scrollToSelected) {
-        if (scrollToSelected && filteredResults.isNotEmpty()) {
+    LaunchedEffect(dialogState.selectedIndex, dialogState.scrollToSelected) {
+        if (dialogState.scrollToSelected && filteredResults.isNotEmpty()) {
             val clampedIndex = dialogState.selectedIndex.coerceIn(0, filteredResults.size - 1)
             coroutineScope.launch {
                 // A RESULT index is not a LazyColumn item index when sections are shown: each
@@ -218,7 +220,7 @@ fun GlobalSearchDialog(
                 val grouped = dialogState.activeCategory == SearchCategory.ALL
                 listState.animateScrollToItem(listItemIndexFor(clampedIndex, filteredResults, showSections = grouped))
             }
-            scrollToSelected = false
+            dialogState.scrollToSelected = false
         }
     }
 
@@ -235,7 +237,7 @@ fun GlobalSearchDialog(
     // Reset selected index when category changes
     LaunchedEffect(dialogState.activeCategory) {
         dialogState.selectedIndex = 0
-        scrollToSelected = true
+        dialogState.scrollToSelected = true
     }
 
     // Handle result selection
@@ -337,7 +339,7 @@ fun GlobalSearchDialog(
                                 Key.DirectionUp -> {
                                     if (filteredResults.isNotEmpty()) {
                                         dialogState.selectedIndex = (dialogState.selectedIndex - 1).coerceAtLeast(0)
-                                        scrollToSelected = true
+                                        dialogState.scrollToSelected = true
                                     }
                                     true
                                 }
@@ -346,7 +348,7 @@ fun GlobalSearchDialog(
                                     if (filteredResults.isNotEmpty()) {
                                         dialogState.selectedIndex =
                                             (dialogState.selectedIndex + 1).coerceAtMost(filteredResults.size - 1)
-                                        scrollToSelected = true
+                                        dialogState.scrollToSelected = true
                                     }
                                     true
                                 }

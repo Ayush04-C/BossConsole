@@ -15,11 +15,10 @@ class FileIndexerTest {
     @Test
     fun `a later request waits for the active scan and then publishes its own files`() =
         runBlocking {
-            val indexer = FileIndexer()
             val firstScanStarted = CompletableDeferred<Unit>()
             val releaseFirstScan = CompletableDeferred<Unit>()
             val calls = mutableListOf<String>()
-            indexer.scanForTest = { projectPath ->
+            val indexer = FileIndexer { projectPath ->
                 calls += projectPath
                 if (projectPath == "project-a") {
                     firstScanStarted.complete(Unit)
@@ -48,10 +47,9 @@ class FileIndexerTest {
     @Test
     fun `cancelling an active scan propagates and publishes no stale metadata`() =
         runBlocking {
-            val indexer = FileIndexer()
             val scanStarted = CompletableDeferred<Unit>()
             val neverRelease = CompletableDeferred<Unit>()
-            indexer.scanForTest = {
+            val indexer = FileIndexer {
                 scanStarted.complete(Unit)
                 neverRelease.await()
                 listOf(indexedFile("stale"))
@@ -64,16 +62,16 @@ class FileIndexerTest {
             assertFailsWith<CancellationException> { indexing.await() }
             assertEquals(emptyList(), indexer.indexedFiles.value)
             assertNull(indexer.indexedPath.value)
+            assertFalse(indexer.isIndexing.value, "cancellation must release the indexing indicator")
         }
 
     @Test
     fun `cancelling a queued request prevents it from running or publishing`() =
         runBlocking {
-            val indexer = FileIndexer()
             val firstScanStarted = CompletableDeferred<Unit>()
             val releaseFirstScan = CompletableDeferred<Unit>()
             val calls = mutableListOf<String>()
-            indexer.scanForTest = { projectPath ->
+            val indexer = FileIndexer { projectPath ->
                 calls += projectPath
                 if (projectPath == "project-a") {
                     firstScanStarted.complete(Unit)
@@ -99,11 +97,10 @@ class FileIndexerTest {
     @Test
     fun `cancelling the lock holder releases the queued request`() =
         runBlocking {
-            val indexer = FileIndexer()
             val firstScanStarted = CompletableDeferred<Unit>()
             val neverRelease = CompletableDeferred<Unit>()
             val calls = mutableListOf<String>()
-            indexer.scanForTest = { projectPath ->
+            val indexer = FileIndexer { projectPath ->
                 calls += projectPath
                 if (projectPath == "project-a") {
                     firstScanStarted.complete(Unit)
@@ -128,11 +125,10 @@ class FileIndexerTest {
     @Test
     fun `a non cancellation scan failure releases the queued request`() =
         runBlocking {
-            val indexer = FileIndexer()
             val firstScanStarted = CompletableDeferred<Unit>()
             val releaseFailure = CompletableDeferred<Unit>()
             val calls = mutableListOf<String>()
-            indexer.scanForTest = { projectPath ->
+            val indexer = FileIndexer { projectPath ->
                 calls += projectPath
                 if (projectPath == "project-a") {
                     firstScanStarted.complete(Unit)
@@ -160,11 +156,10 @@ class FileIndexerTest {
     @Test
     fun `rapid A B C requests serialize and publish the last completed project`() =
         runBlocking {
-            val indexer = FileIndexer()
             val firstScanStarted = CompletableDeferred<Unit>()
             val releaseFirstScan = CompletableDeferred<Unit>()
             val calls = mutableListOf<String>()
-            indexer.scanForTest = { projectPath ->
+            val indexer = FileIndexer { projectPath ->
                 calls += projectPath
                 if (projectPath == "project-a") {
                     firstScanStarted.complete(Unit)

@@ -29,6 +29,7 @@ import ai.rever.boss.services.TerminalHandlerService
 import ai.rever.boss.services.URLHandlerService
 import ai.rever.boss.services.WorkspaceHandlerService
 import ai.rever.boss.settings.MicrokernelModeConfirmation
+import ai.rever.boss.search.SpotlightFileIndexOwner
 import ai.rever.boss.updater.UpdateCoordinator
 import ai.rever.boss.updater.UpdateHandle
 import ai.rever.boss.utils.logging.BossLogger
@@ -86,6 +87,12 @@ internal class BossAppState(
     var newTabDialogInitialType by mutableStateOf<TabType?>(null)
     var showTopOfMindDialog by mutableStateOf(false)
     var showGlobalSearchDialog by mutableStateOf(false)
+
+    /**
+     * Retains one project index while this window remains open. Dialog-local search state is kept
+     * in GlobalSearchDialog so a reopen cannot restore another session's query or selection.
+     */
+    val spotlightFileIndexes = SpotlightFileIndexOwner()
 
     /**
      * The tools launcher's dialog.
