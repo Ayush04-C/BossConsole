@@ -37,7 +37,8 @@ class GlobalSearchNewSourcesTest {
         SearchSources.clearForTests()
     }
 
-    private fun searchFor(query: String): List<SearchResult> = runBlocking { GlobalSearchService.search(query, WINDOW, emptyList()) }
+    private fun searchFor(query: String): List<SearchResult> =
+        runBlocking { GlobalSearchService.search(query, WINDOW, emptyList()) }
 
     private inline fun <reified T : SearchResult> resultsOf(q: String) = searchFor(q).filterIsInstance<T>()
 

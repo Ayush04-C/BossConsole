@@ -47,7 +47,10 @@ class SpotlightSearchEffectTest {
                     withTimeout(5_000) {
                         while (first.results.filterIsInstance<SearchResult.FileResult>().isEmpty()) delay(10)
                     }
-                    assertEquals("/a/needle.kt", first.results.filterIsInstance<SearchResult.FileResult>().single().path)
+                    assertEquals(
+                        "/a/needle.kt",
+                        first.results.filterIsInstance<SearchResult.FileResult>().single().path,
+                    )
 
                     // The query and file snapshot are identical; session identity must still restart the effect.
                     val second = SpotlightDialogState().apply { query = "needle" }

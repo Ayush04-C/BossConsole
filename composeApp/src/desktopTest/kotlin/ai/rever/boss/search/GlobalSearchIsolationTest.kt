@@ -79,7 +79,8 @@ class GlobalSearchIsolationTest {
 
     @Test
     fun `dialog receives a window-owned indexer instead of constructing one per open`() {
-        val dialogSource = File("src/commonMain/kotlin/ai/rever/boss/components/dialogs/GlobalSearchDialog.kt").readText()
+        val dialogSource =
+            File("src/commonMain/kotlin/ai/rever/boss/components/dialogs/GlobalSearchDialog.kt").readText()
         val hostSource = File("src/commonMain/kotlin/ai/rever/boss/app/BossAppDialogs.kt").readText()
 
         assertTrue(dialogSource.contains("fileIndexer: FileIndexer"))

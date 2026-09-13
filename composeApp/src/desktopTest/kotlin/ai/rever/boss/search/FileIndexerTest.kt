@@ -133,7 +133,7 @@ class FileIndexerTest {
                 if (projectPath == "project-a") {
                     firstScanStarted.complete(Unit)
                     releaseFailure.await()
-                    throw IllegalStateException("scan failed")
+                    error("scan failed")
                 }
                 listOf(indexedFile(projectPath))
             }

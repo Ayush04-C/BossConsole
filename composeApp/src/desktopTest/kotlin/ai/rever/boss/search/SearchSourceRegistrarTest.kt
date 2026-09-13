@@ -191,7 +191,9 @@ class SearchSourceRegistrarTest {
         McpToolRegistryImpl.registerProvider(provider)
         try {
             val hits =
-                runBlocking { GlobalSearchService.search("registrar_probe", windowId = null, indexedFiles = emptyList()) }
+                runBlocking {
+                    GlobalSearchService.search("registrar_probe", windowId = null, indexedFiles = emptyList())
+                }
                     .filterIsInstance<SearchResult.McpToolResult>()
 
             assertEquals(listOf("registrar_probe"), hits.map { it.name })
@@ -218,7 +220,9 @@ class SearchSourceRegistrarTest {
                 }
             }
             val hits =
-                runBlocking { GlobalSearchService.search("registrar probe", windowId = null, indexedFiles = emptyList()) }
+                runBlocking {
+                    GlobalSearchService.search("registrar probe", windowId = null, indexedFiles = emptyList())
+                }
                     .filterIsInstance<SearchResult.PageResult>()
 
             assertTrue(
@@ -234,7 +238,10 @@ class SearchSourceRegistrarTest {
     fun `an unregistered settings source contributes nothing rather than failing the search`() {
         // The startup state. Registering is a single call in main(), so the failure mode if it is
         // ever dropped is silence - worth pinning that it is silence and not a crash.
-        val results = runBlocking { GlobalSearchService.search("show title bar", windowId = null, indexedFiles = emptyList()) }
+        val results =
+            runBlocking {
+                GlobalSearchService.search("show title bar", windowId = null, indexedFiles = emptyList())
+            }
 
         assertTrue(results.filterIsInstance<SearchResult.SettingResult>().isEmpty())
     }

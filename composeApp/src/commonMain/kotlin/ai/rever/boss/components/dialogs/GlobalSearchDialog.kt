@@ -144,6 +144,7 @@ private val TrailingChipMaxWidth = 140.dp
  * @param onBookmarkSelect Called when a bookmark is selected, with the bookmark config
  * @param onRunConfigSelect Called when a run config is selected, with the config ID
  */
+@Suppress("LongMethod", "CyclomaticComplexMethod")
 @Composable
 fun GlobalSearchDialog(
     projectPath: String,
@@ -354,7 +355,10 @@ fun GlobalSearchDialog(
                                 }
 
                                 Key.Enter -> {
-                                    if (filteredResults.isNotEmpty() && dialogState.selectedIndex < filteredResults.size) {
+                                    if (
+                                        filteredResults.isNotEmpty() &&
+                                        dialogState.selectedIndex < filteredResults.size
+                                    ) {
                                         selectResult(filteredResults[dialogState.selectedIndex])
                                     }
                                     true
