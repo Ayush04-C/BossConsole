@@ -204,23 +204,7 @@ fun GlobalSearchDialog(
         fileIndexer.indexProject(projectPath)
     }
 
-    // Debounced search as user types
-    // 50ms debounce balances responsiveness with avoiding excessive searches while typing fast
-    LaunchedEffect(dialogState.query) {
-        if (dialogState.query.isBlank()) {
-            dialogState.results = emptyList()
-            return@LaunchedEffect
-        }
-        delay(50)
-        // This window, so the Tools rows come from the sidebar this dialog can actually open, and
-        // so a signpost is offered only when its panel is present here - see SearchSources.
-        dialogState.isSearching = true
-        try {
-            dialogState.results = GlobalSearchService.search(dialogState.query, windowId, indexedFiles)
-        } finally {
-            dialogState.isSearching = false
-        }
-    }
+    SpotlightSearchEffect(dialogState, windowId, indexedFiles)
 
     // Auto-scroll to selected item (only when triggered by keyboard)
     LaunchedEffect(dialogState.selectedIndex, scrollToSelected) {

@@ -89,7 +89,7 @@ class FileIndexer {
     /**
      * Index all files in the given project path.
      *
-     * Thread-safe: Uses mutex to prevent concurrent indexing operations.
+     * Thread-safe: Serializes indexing requests with a mutex; queued requests are not dropped.
      *
      * @param projectPath The root directory to index
      * @param forceReindex If true, re-index even if already indexed

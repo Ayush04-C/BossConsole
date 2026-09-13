@@ -88,7 +88,8 @@ object GlobalSearchService {
      * Searches are run in parallel across all categories for better performance
      * with large datasets. Also queries registered search providers from plugins.
      *
-     * @param query The search query
+     * @param rawQuery The search query
+     * @param indexedFiles The file snapshot owned by this dialog project session
      * @return every match from every source, in no particular order. [getFilteredResults] is what
      *   orders them - by category, then score - and is the only order anything draws or arrows
      *   through.

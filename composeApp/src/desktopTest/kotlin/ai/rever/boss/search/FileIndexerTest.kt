@@ -38,6 +38,7 @@ class FileIndexerTest {
             releaseFirstScan.complete(Unit)
             first.await()
             second.await()
+            assertFalse(indexer.isIndexing.value, "completed or failed scans must release the indexing indicator")
 
             assertEquals(listOf("project-a", "project-b"), calls)
             assertEquals("project-b", indexer.indexedPath.value)
@@ -118,6 +119,7 @@ class FileIndexerTest {
             first.cancel()
             assertFailsWith<CancellationException> { first.await() }
             second.await()
+            assertFalse(indexer.isIndexing.value, "completed or failed scans must release the indexing indicator")
 
             assertEquals(listOf("project-a", "project-b"), calls)
             assertEquals("project-b", indexer.indexedPath.value)
@@ -148,6 +150,7 @@ class FileIndexerTest {
             releaseFailure.complete(Unit)
             first.await()
             second.await()
+            assertFalse(indexer.isIndexing.value, "completed or failed scans must release the indexing indicator")
 
             assertEquals(listOf("project-a", "project-b"), calls)
             assertEquals("project-b", indexer.indexedPath.value)
