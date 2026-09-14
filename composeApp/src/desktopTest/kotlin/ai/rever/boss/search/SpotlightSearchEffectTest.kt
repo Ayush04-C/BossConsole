@@ -27,12 +27,13 @@ class SpotlightSearchEffectTest {
             withContext(clock) {
                 val recomposer = Recomposer(coroutineContext)
                 val runner = launch { recomposer.runRecomposeAndApplyChanges() }
-                val frames = launch {
-                    while (isActive) {
-                        clock.sendFrame(System.nanoTime())
-                        delay(1)
+                val frames =
+                    launch {
+                        while (isActive) {
+                            clock.sendFrame(System.nanoTime())
+                            delay(1)
+                        }
                     }
-                }
                 val composition = Composition(NoNodes(), recomposer)
                 val first = SpotlightDialogState().apply { query = "needle" }
                 val session = mutableStateOf(first)
@@ -49,7 +50,10 @@ class SpotlightSearchEffectTest {
                     }
                     assertEquals(
                         "/a/needle.kt",
-                        first.results.filterIsInstance<SearchResult.FileResult>().single().path,
+                        first.results
+                            .filterIsInstance<SearchResult.FileResult>()
+                            .single()
+                            .path,
                     )
 
                     // The query and file snapshot are identical; session identity must still restart the effect.
@@ -72,10 +76,27 @@ class SpotlightSearchEffectTest {
         }
 
     private class NoNodes : AbstractApplier<Unit>(Unit) {
-        override fun insertTopDown(index: Int, instance: Unit) = Unit
-        override fun insertBottomUp(index: Int, instance: Unit) = Unit
-        override fun remove(index: Int, count: Int) = Unit
-        override fun move(from: Int, to: Int, count: Int) = Unit
+        override fun insertTopDown(
+            index: Int,
+            instance: Unit,
+        ) = Unit
+
+        override fun insertBottomUp(
+            index: Int,
+            instance: Unit,
+        ) = Unit
+
+        override fun remove(
+            index: Int,
+            count: Int,
+        ) = Unit
+
+        override fun move(
+            from: Int,
+            to: Int,
+            count: Int,
+        ) = Unit
+
         override fun onClear() = Unit
     }
 }

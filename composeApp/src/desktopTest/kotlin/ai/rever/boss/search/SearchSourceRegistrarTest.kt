@@ -193,8 +193,7 @@ class SearchSourceRegistrarTest {
             val hits =
                 runBlocking {
                     GlobalSearchService.search("registrar_probe", windowId = null, indexedFiles = emptyList())
-                }
-                    .filterIsInstance<SearchResult.McpToolResult>()
+                }.filterIsInstance<SearchResult.McpToolResult>()
 
             assertEquals(listOf("registrar_probe"), hits.map { it.name })
         } finally {
@@ -222,8 +221,7 @@ class SearchSourceRegistrarTest {
             val hits =
                 runBlocking {
                     GlobalSearchService.search("registrar probe", windowId = null, indexedFiles = emptyList())
-                }
-                    .filterIsInstance<SearchResult.PageResult>()
+                }.filterIsInstance<SearchResult.PageResult>()
 
             assertTrue(
                 hits.any { it.url == PROBE_PAGE },

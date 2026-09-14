@@ -32,5 +32,4 @@ internal fun SpotlightSearchEffect(
             dialogState.isSearching = false
         }
     }
-
 }

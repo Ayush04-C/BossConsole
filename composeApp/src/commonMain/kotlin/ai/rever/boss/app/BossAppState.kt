@@ -24,12 +24,12 @@ import ai.rever.boss.components.workspaces.LayoutWorkspace
 import ai.rever.boss.components.workspaces.workspaceManager
 import ai.rever.boss.html.HtmlFileOpenRequest
 import ai.rever.boss.mcp.McpApprovalRequest
+import ai.rever.boss.search.SpotlightFileIndexOwner
 import ai.rever.boss.services.FileHandlerService
 import ai.rever.boss.services.TerminalHandlerService
 import ai.rever.boss.services.URLHandlerService
 import ai.rever.boss.services.WorkspaceHandlerService
 import ai.rever.boss.settings.MicrokernelModeConfirmation
-import ai.rever.boss.search.SpotlightFileIndexOwner
 import ai.rever.boss.updater.UpdateCoordinator
 import ai.rever.boss.updater.UpdateHandle
 import ai.rever.boss.utils.logging.BossLogger

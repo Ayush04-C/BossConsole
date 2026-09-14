@@ -1,8 +1,8 @@
 package ai.rever.boss.search
 
 import ai.rever.boss.components.dialogs.SpotlightDialogState
-import java.io.File
 import kotlinx.coroutines.runBlocking
+import java.io.File
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test

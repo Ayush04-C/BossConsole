@@ -18,14 +18,15 @@ class FileIndexerTest {
             val firstScanStarted = CompletableDeferred<Unit>()
             val releaseFirstScan = CompletableDeferred<Unit>()
             val calls = mutableListOf<String>()
-            val indexer = FileIndexer { projectPath ->
-                calls += projectPath
-                if (projectPath == "project-a") {
-                    firstScanStarted.complete(Unit)
-                    releaseFirstScan.await()
+            val indexer =
+                FileIndexer { projectPath ->
+                    calls += projectPath
+                    if (projectPath == "project-a") {
+                        firstScanStarted.complete(Unit)
+                        releaseFirstScan.await()
+                    }
+                    listOf(indexedFile(projectPath))
                 }
-                listOf(indexedFile(projectPath))
-            }
 
             val first = async(start = CoroutineStart.UNDISPATCHED) { indexer.indexProject("project-a") }
             firstScanStarted.await()
@@ -49,11 +50,12 @@ class FileIndexerTest {
         runBlocking {
             val scanStarted = CompletableDeferred<Unit>()
             val neverRelease = CompletableDeferred<Unit>()
-            val indexer = FileIndexer {
-                scanStarted.complete(Unit)
-                neverRelease.await()
-                listOf(indexedFile("stale"))
-            }
+            val indexer =
+                FileIndexer {
+                    scanStarted.complete(Unit)
+                    neverRelease.await()
+                    listOf(indexedFile("stale"))
+                }
 
             val indexing = async(start = CoroutineStart.UNDISPATCHED) { indexer.indexProject("project-a") }
             scanStarted.await()
@@ -71,14 +73,15 @@ class FileIndexerTest {
             val firstScanStarted = CompletableDeferred<Unit>()
             val releaseFirstScan = CompletableDeferred<Unit>()
             val calls = mutableListOf<String>()
-            val indexer = FileIndexer { projectPath ->
-                calls += projectPath
-                if (projectPath == "project-a") {
-                    firstScanStarted.complete(Unit)
-                    releaseFirstScan.await()
+            val indexer =
+                FileIndexer { projectPath ->
+                    calls += projectPath
+                    if (projectPath == "project-a") {
+                        firstScanStarted.complete(Unit)
+                        releaseFirstScan.await()
+                    }
+                    listOf(indexedFile(projectPath))
                 }
-                listOf(indexedFile(projectPath))
-            }
 
             val first = async(start = CoroutineStart.UNDISPATCHED) { indexer.indexProject("project-a") }
             firstScanStarted.await()
@@ -100,14 +103,15 @@ class FileIndexerTest {
             val firstScanStarted = CompletableDeferred<Unit>()
             val neverRelease = CompletableDeferred<Unit>()
             val calls = mutableListOf<String>()
-            val indexer = FileIndexer { projectPath ->
-                calls += projectPath
-                if (projectPath == "project-a") {
-                    firstScanStarted.complete(Unit)
-                    neverRelease.await()
+            val indexer =
+                FileIndexer { projectPath ->
+                    calls += projectPath
+                    if (projectPath == "project-a") {
+                        firstScanStarted.complete(Unit)
+                        neverRelease.await()
+                    }
+                    listOf(indexedFile(projectPath))
                 }
-                listOf(indexedFile(projectPath))
-            }
 
             val first = async(start = CoroutineStart.UNDISPATCHED) { indexer.indexProject("project-a") }
             firstScanStarted.await()
@@ -128,15 +132,16 @@ class FileIndexerTest {
             val firstScanStarted = CompletableDeferred<Unit>()
             val releaseFailure = CompletableDeferred<Unit>()
             val calls = mutableListOf<String>()
-            val indexer = FileIndexer { projectPath ->
-                calls += projectPath
-                if (projectPath == "project-a") {
-                    firstScanStarted.complete(Unit)
-                    releaseFailure.await()
-                    error("scan failed")
+            val indexer =
+                FileIndexer { projectPath ->
+                    calls += projectPath
+                    if (projectPath == "project-a") {
+                        firstScanStarted.complete(Unit)
+                        releaseFailure.await()
+                        error("scan failed")
+                    }
+                    listOf(indexedFile(projectPath))
                 }
-                listOf(indexedFile(projectPath))
-            }
 
             val first = async(start = CoroutineStart.UNDISPATCHED) { indexer.indexProject("project-a") }
             firstScanStarted.await()
@@ -159,14 +164,15 @@ class FileIndexerTest {
             val firstScanStarted = CompletableDeferred<Unit>()
             val releaseFirstScan = CompletableDeferred<Unit>()
             val calls = mutableListOf<String>()
-            val indexer = FileIndexer { projectPath ->
-                calls += projectPath
-                if (projectPath == "project-a") {
-                    firstScanStarted.complete(Unit)
-                    releaseFirstScan.await()
+            val indexer =
+                FileIndexer { projectPath ->
+                    calls += projectPath
+                    if (projectPath == "project-a") {
+                        firstScanStarted.complete(Unit)
+                        releaseFirstScan.await()
+                    }
+                    listOf(indexedFile(projectPath))
                 }
-                listOf(indexedFile(projectPath))
-            }
 
             val a = async(start = CoroutineStart.UNDISPATCHED) { indexer.indexProject("project-a") }
             firstScanStarted.await()
