@@ -166,7 +166,11 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
             validatePath(request.path)
             val file = File(request.path)
             if (request.createParents) file.parentFile?.mkdirs()
-            if (request.isDirectory) file.mkdirs() else file.createNewFile()
+            if (request.isDirectory) {
+                file.mkdirs()
+            } else if (!file.createNewFile()) {
+                throw status(Status.ALREADY_EXISTS, "File already exists: ${request.path}", null)
+            }
             Empty.getDefaultInstance()
         }
 
@@ -177,6 +181,18 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
             val file = File(request.path)
             if (request.recursive && file.isDirectory) {
                 file.deleteRecursively()
+            } else if (!request.recursive) {
+                val deleted = file.delete()
+                if (!deleted && file.exists()) {
+                    if (file.isDirectory && file.listFiles()?.isNotEmpty() == true) {
+                        throw status(
+                            Status.FAILED_PRECONDITION,
+                            "Cannot delete non-empty directory without recursive=true: ${request.path}",
+                            null,
+                        )
+                    }
+                    throw status(Status.INTERNAL, "Failed to delete path: ${request.path}", null)
+                }
             } else {
                 file.delete()
             }
