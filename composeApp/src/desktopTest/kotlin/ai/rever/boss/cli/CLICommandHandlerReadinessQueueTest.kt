@@ -11,6 +11,25 @@ import kotlin.test.assertTrue
 
 class CLICommandHandlerReadinessQueueTest {
     @Test
+    fun `initialization preserves every command variant and external terminal origin`() {
+        val queue = ReadinessQueue<CLICommand>()
+        val commands =
+            listOf(
+                CLICommand.OpenUrl("https://example.com"),
+                CLICommand.LoadWorkspace("workspace.json"),
+                CLICommand.OpenFile("file.txt"),
+                CLICommand.OpenFolder("project"),
+                CLICommand.OpenTerminal("echo external", DeepLinkOrigin.EXTERNAL),
+            )
+        commands.forEach { assertFalse(queue.enqueueOrClaimForCaller(it)) }
+
+        assertEquals(commands, queue.markReadyAndClaimQueued())
+        assertTrue(queue.markReadyAndClaimQueued().isEmpty())
+        commands.forEach { assertTrue(queue.enqueueOrClaimForCaller(it)) }
+        assertTrue(queue.markReadyAndClaimQueued().isEmpty())
+    }
+
+    @Test
     fun `queued file values are claimed once in FIFO order when readiness wins`() {
         val queue = ReadinessQueue<String>()
 
