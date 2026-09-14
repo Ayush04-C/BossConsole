@@ -138,6 +138,7 @@ private val TrailingChipMaxWidth = 140.dp
  *
  * @param projectPath The project directory to search in
  * @param fileIndexer The window-owned index for [projectPath], retained across dialog reopen
+ * @param onIndexProject Requests indexing in the owning window's scope
  * @param onDismiss Called when dialog should close
  * @param onFileSelect Called when a file is selected, with the file's absolute path
  * @param onTabSelect Called when an open tab is selected, with windowId, panelId, and tabId
@@ -149,6 +150,7 @@ private val TrailingChipMaxWidth = 140.dp
 fun GlobalSearchDialog(
     projectPath: String,
     fileIndexer: FileIndexer,
+    onIndexProject: () -> Unit,
     workspaceManager: WorkspaceManager,
     windowId: String,
     onDismiss: () -> Unit,
@@ -164,7 +166,7 @@ fun GlobalSearchDialog(
 ) {
     // The conditional caller removes this dialog on close, so this state belongs to exactly one
     // open session. The window owns the longer-lived file index passed above.
-    val dialogState = remember { SpotlightDialogState() }
+    val dialogState = remember(projectPath) { SpotlightDialogState() }
     val indexedFiles by fileIndexer.indexedFiles.collectAsState()
     val isIndexing by fileIndexer.isIndexing.collectAsState()
     val listState = rememberLazyListState()
@@ -204,7 +206,7 @@ fun GlobalSearchDialog(
             return@LaunchedEffect
         }
         globalSearchLogger.debug(LogCategory.UI, "Indexing project for search", mapOf("path" to projectPath))
-        fileIndexer.indexProject(projectPath)
+        onIndexProject()
     }
 
     SpotlightSearchEffect(dialogState, windowId, indexedFiles)

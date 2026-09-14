@@ -92,7 +92,7 @@ internal class BossAppState(
      * Retains one project index while this window remains open. Dialog-local search state is kept
      * in GlobalSearchDialog so a reopen cannot restore another session's query or selection.
      */
-    val spotlightFileIndexes = SpotlightFileIndexOwner()
+    val spotlightFileIndexes = SpotlightFileIndexOwner(coroutineScope)
 
     /**
      * The tools launcher's dialog.

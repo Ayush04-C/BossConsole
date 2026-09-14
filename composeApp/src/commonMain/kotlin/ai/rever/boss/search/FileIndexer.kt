@@ -4,6 +4,8 @@ import ai.rever.boss.utils.logging.BossLogger
 import ai.rever.boss.utils.logging.LogCategory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -149,7 +151,8 @@ class FileIndexer(
     /**
      * Scan all files in the project directory recursively.
      */
-    private fun scanProjectFiles(projectPath: String): List<IndexedFile> {
+    private suspend fun scanProjectFiles(projectPath: String): List<IndexedFile> {
+        currentCoroutineContext().ensureActive()
         val rootDir = File(projectPath)
         if (!rootDir.exists() || !rootDir.isDirectory) {
             logger.warn(LogCategory.FILE, "Invalid project path", mapOf("path" to projectPath))
@@ -172,19 +175,21 @@ class FileIndexer(
      * Security: Validates that all indexed files remain within the project root
      * to prevent path traversal via symlinks.
      */
-    private fun scanDirectory(
+    private suspend fun scanDirectory(
         dir: File,
         rootCanonicalPath: String,
         rootPathLength: Int,
         files: MutableList<IndexedFile>,
         depth: Int = 0,
     ) {
+        currentCoroutineContext().ensureActive()
         // Limit depth to prevent extremely deep traversal
         if (depth > maxDepth) return
 
         val children = dir.listFiles() ?: return
 
         for (child in children) {
+            currentCoroutineContext().ensureActive()
             val name = child.name
 
             // Skip hidden files and directories

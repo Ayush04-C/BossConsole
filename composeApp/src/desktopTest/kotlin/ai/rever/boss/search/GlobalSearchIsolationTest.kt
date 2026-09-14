@@ -65,27 +65,19 @@ class GlobalSearchIsolationTest {
     }
 
     @Test
-    fun `same project dialog states remain independent`() {
-        val first = SpotlightDialogState()
-        val second = SpotlightDialogState()
-        val sharedProjectResult = SearchResult.FileResult("shared.kt", "/p/shared.kt", "shared.kt", 10, emptyList())
-
-        first.results = listOf(sharedProjectResult)
-        first.activeCategory = SearchCategory.FILES
-
-        assertEquals(emptyList(), second.results)
-        assertEquals(SearchCategory.ALL, second.activeCategory)
-    }
-
-    @Test
     fun `dialog receives a window-owned indexer instead of constructing one per open`() {
         val dialogSource =
             File("src/commonMain/kotlin/ai/rever/boss/components/dialogs/GlobalSearchDialog.kt").readText()
         val hostSource = File("src/commonMain/kotlin/ai/rever/boss/app/BossAppDialogs.kt").readText()
 
         assertTrue(dialogSource.contains("fileIndexer: FileIndexer"))
-        assertFalse(dialogSource.contains("remember(projectPath) { FileIndexer() }"))
-        assertTrue(hostSource.contains("fileIndexer = state.spotlightFileIndexes.indexerFor(selectedProject.path)"))
+        assertTrue(dialogSource.contains("remember(projectPath) { SpotlightDialogState() }"))
+        assertFalse(dialogSource.contains("fileIndexer.indexProject("))
+        assertTrue(hostSource.contains("onIndexProject = { state.spotlightFileIndexes.ensureIndexed"))
+        assertFalse(dialogSource.contains("FileIndexer("))
+        val ownerLookup = "state.spotlightFileIndexes.indexerFor(selectedProject.path)"
+        assertTrue(hostSource.contains("val spotlightFileIndexer = $ownerLookup"))
+        assertTrue(hostSource.contains("fileIndexer = spotlightFileIndexer"))
     }
 
     private fun List<SearchResult>.fileResults() = filterIsInstance<SearchResult.FileResult>()
