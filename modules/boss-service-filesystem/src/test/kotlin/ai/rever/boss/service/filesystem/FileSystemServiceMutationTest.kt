@@ -6,13 +6,14 @@ import ai.rever.boss.ipc.proto.services.FileSystemServiceGrpcKt
 import io.grpc.ManagedChannel
 import io.grpc.ManagedChannelBuilder
 import io.grpc.Server
-import io.grpc.ServerBuilder
 import io.grpc.Status
 import io.grpc.StatusException
+import io.grpc.netty.NettyServerBuilder
 import kotlinx.coroutines.runBlocking
 import org.junit.Assume.assumeTrue
 import java.io.File
 import java.io.IOException
+import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.attribute.PosixFilePermission
@@ -158,18 +159,50 @@ class FileSystemServiceMutationTest {
         val permissions = createProtectedDanglingSymlink(parent, link)
 
         try {
+            // Establish the environment before invoking the service; never turn a failed assertion into a skip.
+            assumeTrue("The parent remains writable despite the permission fixture", !Files.isWritable(parent.toPath()))
             val error = assertFailsWith<StatusException> { deleteFile(link, recursive = false) }
 
             assertEquals(Status.Code.PERMISSION_DENIED, error.status.code)
+            assertEquals("Access denied: ${link.absolutePath}", error.status.description)
             assertTrue(Files.exists(link.toPath(), NOFOLLOW_LINKS))
-        } catch (failure: AssertionError) {
-            assumeTrue(
-                "The filesystem did not enforce the protected-parent permission fixture",
-                Files.exists(link.toPath(), NOFOLLOW_LINKS),
-            )
-            throw failure
         } finally {
             Files.setPosixFilePermissions(parent.toPath(), permissions)
+        }
+    }
+
+    @Test
+    fun `non-recursive delete removes a symlink without deleting its target`() {
+        val target = testDirectory.resolve("retained-target.txt").apply { writeText("keep me") }
+        val link = testDirectory.resolve("removable-link")
+        try {
+            Files.createSymbolicLink(link.toPath(), target.toPath())
+        } catch (_: UnsupportedOperationException) {
+            assumeTrue("Symbolic links are unavailable on this platform", false)
+        } catch (_: IOException) {
+            assumeTrue("The environment cannot create the symbolic-link fixture", false)
+        }
+
+        deleteFile(link, recursive = false)
+
+        assertFalse(Files.exists(link.toPath(), NOFOLLOW_LINKS))
+        assertEquals("keep me", target.readText())
+    }
+
+    @Test
+    fun `gRPC create with a missing parent retains the deferred UNKNOWN status`() {
+        val file = testDirectory.resolve("missing-grpc-parent/file.txt")
+        withGrpcService { stub ->
+            // Create IOException mapping is deferred; this pins the actual wire behavior, not the direct exception.
+            val error =
+                assertFailsWith<StatusException> {
+                    runBlocking {
+                        stub.createFile(CreateFileRequest.newBuilder().setPath(file.absolutePath).build())
+                    }
+                }
+            assertEquals(Status.Code.UNKNOWN, error.status.code)
+            assertEquals(null, error.status.description)
+            assertFalse(file.exists())
         }
     }
 
@@ -254,8 +287,8 @@ class FileSystemServiceMutationTest {
 
     private fun withGrpcService(block: (FileSystemServiceGrpcKt.FileSystemServiceCoroutineStub) -> Unit) {
         val server: Server =
-            ServerBuilder
-                .forPort(0)
+            NettyServerBuilder
+                .forAddress(InetSocketAddress("127.0.0.1", 0))
                 .addService(service)
                 .build()
                 .start()

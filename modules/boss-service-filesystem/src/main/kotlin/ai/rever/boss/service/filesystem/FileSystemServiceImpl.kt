@@ -161,6 +161,7 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
             }
         }
 
+    // Directory creation and create I/O exception mapping retain their legacy behavior in this scoped fix.
     override suspend fun createFile(request: CreateFileRequest): Empty =
         withContext(Dispatchers.IO) {
             logger.info("createFile: path={}, isDirectory={}", request.path, request.isDirectory)
@@ -175,6 +176,12 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
             Empty.getDefaultInstance()
         }
 
+    /**
+     * Nonrecursive deletion preserves missing-target success for RPC compatibility. NIO removes the
+     * directory entry without following links and supplies typed failures that survive gRPC as statuses.
+     * Recursive deletion retains its legacy unchecked behavior; changing that contract is separate work.
+     * Only AccessDeniedException maps to PERMISSION_DENIED; other provider I/O errors remain INTERNAL.
+     */
     override suspend fun deleteFile(request: DeleteFileRequest): Empty =
         withContext(Dispatchers.IO) {
             logger.info("deleteFile: path={}, recursive={}", request.path, request.recursive)
