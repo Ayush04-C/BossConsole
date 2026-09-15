@@ -2,11 +2,21 @@ package ai.rever.boss.service.filesystem
 
 import ai.rever.boss.ipc.proto.services.CreateFileRequest
 import ai.rever.boss.ipc.proto.services.DeleteFileRequest
+import ai.rever.boss.ipc.proto.services.FileSystemServiceGrpcKt
+import io.grpc.ManagedChannel
+import io.grpc.ManagedChannelBuilder
+import io.grpc.Server
+import io.grpc.ServerBuilder
 import io.grpc.Status
 import io.grpc.StatusException
 import kotlinx.coroutines.runBlocking
+import org.junit.Assume.assumeTrue
 import java.io.File
 import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.attribute.PosixFilePermission
+import java.util.concurrent.TimeUnit
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -57,6 +67,35 @@ class FileSystemServiceMutationTest {
         assertEquals(Status.Code.ALREADY_EXISTS, error.status.code)
         assertEquals("File already exists: ${directory.absolutePath}", error.status.description)
         assertTrue(directory.isDirectory)
+    }
+
+    @Test
+    fun `gRPC client receives non-recursive delete refusal status and description`() {
+        val directory = testDirectory.resolve("non-empty-over-grpc").apply { mkdir() }
+        directory.resolve("child.txt").createNewFile()
+
+        withGrpcService { stub ->
+            val error =
+                assertFailsWith<StatusException> {
+                    runBlocking {
+                        stub.deleteFile(
+                            DeleteFileRequest
+                                .newBuilder()
+                                .setPath(directory.absolutePath)
+                                .setRecursive(false)
+                                .build(),
+                        )
+                    }
+                }
+
+            assertEquals(Status.Code.FAILED_PRECONDITION, error.status.code)
+            assertEquals(
+                "Cannot delete non-empty directory without recursive=true: ${directory.absolutePath}",
+                error.status.description,
+            )
+            assertTrue(directory.isDirectory)
+            assertTrue(directory.resolve("child.txt").isFile)
+        }
     }
 
     @Test
@@ -113,6 +152,28 @@ class FileSystemServiceMutationTest {
     }
 
     @Test
+    fun `non-recursive delete reports permission denial for a protected dangling symlink`() {
+        val parent = testDirectory.resolve("protected-parent").apply { mkdir() }
+        val link = parent.resolve("dangling-link")
+        val permissions = createProtectedDanglingSymlink(parent, link)
+
+        try {
+            val error = assertFailsWith<StatusException> { deleteFile(link, recursive = false) }
+
+            assertEquals(Status.Code.PERMISSION_DENIED, error.status.code)
+            assertTrue(Files.exists(link.toPath(), NOFOLLOW_LINKS))
+        } catch (failure: AssertionError) {
+            assumeTrue(
+                "The filesystem did not enforce the protected-parent permission fixture",
+                Files.exists(link.toPath(), NOFOLLOW_LINKS),
+            )
+            throw failure
+        } finally {
+            Files.setPosixFilePermissions(parent.toPath(), permissions)
+        }
+    }
+
+    @Test
     fun `delete missing target remains successful`() {
         val missingFile = testDirectory.resolve("missing.txt")
 
@@ -165,6 +226,49 @@ class FileSystemServiceMutationTest {
                     .setRecursive(recursive)
                     .build(),
             )
+        }
+    }
+
+    private fun createProtectedDanglingSymlink(
+        parent: File,
+        link: File,
+    ): Set<PosixFilePermission> {
+        val permissions =
+            try {
+                Files.getPosixFilePermissions(parent.toPath())
+            } catch (_: UnsupportedOperationException) {
+                assumeTrue("POSIX permissions are unavailable on this platform", false)
+                return emptySet()
+            }
+
+        try {
+            Files.createSymbolicLink(link.toPath(), parent.resolve("missing-target").toPath())
+            Files.setPosixFilePermissions(parent.toPath(), permissions - PosixFilePermission.OWNER_WRITE)
+        } catch (_: UnsupportedOperationException) {
+            assumeTrue("Symbolic links are unavailable on this platform", false)
+        } catch (_: IOException) {
+            assumeTrue("The environment cannot create the dangling-symlink fixture", false)
+        }
+        return permissions
+    }
+
+    private fun withGrpcService(block: (FileSystemServiceGrpcKt.FileSystemServiceCoroutineStub) -> Unit) {
+        val server: Server =
+            ServerBuilder
+                .forPort(0)
+                .addService(service)
+                .build()
+                .start()
+        val channel: ManagedChannel =
+            ManagedChannelBuilder
+                .forAddress("127.0.0.1", server.port)
+                .usePlaintext()
+                .build()
+        try {
+            block(FileSystemServiceGrpcKt.FileSystemServiceCoroutineStub(channel))
+        } finally {
+            channel.shutdownNow().awaitTermination(5, TimeUnit.SECONDS)
+            server.shutdownNow().awaitTermination(5, TimeUnit.SECONDS)
         }
     }
 }

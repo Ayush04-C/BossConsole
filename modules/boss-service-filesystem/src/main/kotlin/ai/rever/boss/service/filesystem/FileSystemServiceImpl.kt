@@ -16,6 +16,7 @@ import java.io.File
 import java.io.IOException
 import java.nio.file.AccessDeniedException
 import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.DirectoryNotEmptyException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.FileSystems
 import java.nio.file.Files
@@ -182,16 +183,22 @@ class FileSystemServiceImpl : FileSystemServiceGrpcKt.FileSystemServiceCoroutine
             if (request.recursive && file.isDirectory) {
                 file.deleteRecursively()
             } else if (!request.recursive) {
-                val deleted = file.delete()
-                if (!deleted && file.exists()) {
-                    if (file.isDirectory && file.listFiles()?.isNotEmpty() == true) {
-                        throw status(
-                            Status.FAILED_PRECONDITION,
-                            "Cannot delete non-empty directory without recursive=true: ${request.path}",
-                            null,
-                        )
-                    }
-                    throw status(Status.INTERNAL, "Failed to delete path: ${request.path}", null)
+                try {
+                    Files.deleteIfExists(file.toPath())
+                } catch (e: DirectoryNotEmptyException) {
+                    throw status(
+                        Status.FAILED_PRECONDITION,
+                        "Cannot delete non-empty directory without recursive=true: ${request.path}",
+                        e,
+                    )
+                } catch (e: AccessDeniedException) {
+                    throw status(Status.PERMISSION_DENIED, "Access denied: ${request.path}", e)
+                } catch (e: IOException) {
+                    throw status(
+                        Status.INTERNAL,
+                        "Failed to delete path: ${request.path}: ${e.message ?: e::class.java.simpleName}",
+                        e,
+                    )
                 }
             } else {
                 file.delete()
